@@ -7,7 +7,6 @@ def generate_transparent_sticker(prompt_text, server_address="127.0.0.1:8188"):
     根据 transparent_workflow_api.json 的结构生成透明贴纸
     """
     # 1. 加载 API 格式的 JSON 工作流
-    # 注意：确保路径正确，如果脚本在 app/ai/ 下，路径应为 '../workflows/transparent_workflow_api.json'
     try:
         with open("../workflows/transparent_workflow_api.json", "r", encoding="utf-8") as f:
             workflow = json.load(f)

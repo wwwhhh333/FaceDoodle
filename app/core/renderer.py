@@ -1,62 +1,146 @@
-﻿# 仿射变换与贴纸 Alpha 融合渲染
+# 区域透视贴合与贴纸 Alpha 融合渲染
 
 import cv2
 import numpy as np
 
 
-def overlay_sticker(frame, sticker, anchor, angle, scale):
-    """
-    底层渲染函数：处理贴纸的缩放、旋转和 Alpha 融合
-    """
-    # 1. 基础缩放：根据人脸宽度调整贴纸大小
-    h, w = sticker.shape[:2]
-    new_w = int(w * scale)
-    new_h = int(h * scale)
-    if new_w <= 0 or new_h <= 0: return frame
+def _pt(value):
+    return np.array(value, dtype=np.float32)
 
-    resized_sticker = cv2.resize(sticker, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-    # 2. 旋转：根据人脸倾斜角度旋转贴纸
-    center = (new_w // 2, new_h // 2)
-    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-    # 使用透明填充旋转后的空白区域
-    rotated_sticker = cv2.warpAffine(resized_sticker, matrix, (new_w, new_h),
-                                     flags=cv2.INTER_LINEAR,
-                                     borderMode=cv2.BORDER_CONSTANT,
-                                     borderValue=(0, 0, 0, 0))
+def _normalize(vec):
+    norm = np.linalg.norm(vec)
+    if norm < 1e-6:
+        return np.array([1.0, 0.0], dtype=np.float32)
+    return vec / norm
 
-    # 3. 计算坐标：将锚点对齐到贴纸中心
-    x_offset = int(anchor[0] - new_w // 2)
-    y_offset = int(anchor[1] - new_h // 2)
 
-    # 4. Alpha 混合 (RGBA 贴合到 BGR 帧)
-    for c in range(0, 3):
-        # 提取贴纸的 RGB 通道和 Alpha 通道 (0-1 归一化)
-        alpha = rotated_sticker[:, :, 3] / 255.0
-        sticker_color = rotated_sticker[:, :, c]
+def _make_quad(center, x_axis, width, height, sticker_shape):
+    x_axis = _normalize(x_axis)
+    y_axis = np.array([-x_axis[1], x_axis[0]], dtype=np.float32)
 
-        # 确定在主帧上的有效绘制区域（防止贴纸超出边界导致溢出错误）
-        y1, y2 = max(0, y_offset), min(frame.shape[0], y_offset + new_h)
-        x1, x2 = max(0, x_offset), min(frame.shape[1], x_offset + new_w)
+    if sticker_shape[0] > 0 and sticker_shape[1] > 0:
+        sticker_ratio = sticker_shape[1] / sticker_shape[0]
+        quad_ratio = width / max(height, 1e-6)
+        if quad_ratio > sticker_ratio:
+            height = width / sticker_ratio
+        else:
+            width = height * sticker_ratio
 
-        # 裁剪对应区域的贴纸数据
-        st_y1, st_y2 = max(0, -y_offset), min(new_h, frame.shape[0] - y_offset)
-        st_x1, st_x2 = max(0, -x_offset), min(new_w, frame.shape[1] - x_offset)
+    half_w = width / 2.0
+    half_h = height / 2.0
 
-        if x1 < x2 and y1 < y2:
-            frame[y1:y2, x1:x2, c] = (
-                    alpha[st_y1:st_y2, st_x1:st_x2] * sticker_color[st_y1:st_y2, st_x1:st_x2] +
-                    (1 - alpha[st_y1:st_y2, st_x1:st_x2]) * frame[y1:y2, x1:x2, c]
-            )
+    return np.array([
+        center - x_axis * half_w - y_axis * half_h,
+        center + x_axis * half_w - y_axis * half_h,
+        center + x_axis * half_w + y_axis * half_h,
+        center - x_axis * half_w + y_axis * half_h,
+    ], dtype=np.float32)
 
-    return frame
+
+def _build_location_quad(face_landmarks, location, sticker_shape):
+    face_width = max(float(face_landmarks.get('face_width', 200.0)), 1.0)
+
+    left_eye_center = _pt(face_landmarks['left_eye_center'])
+    right_eye_center = _pt(face_landmarks['right_eye_center'])
+    mid_eyes = _pt(face_landmarks['mid_eyes'])
+    mouth_center = _pt(face_landmarks['mouth_center'])
+    x_axis = right_eye_center - left_eye_center
+    vertical_axis = _normalize(mouth_center - mid_eyes)
+
+    if location == "forehead":
+        brow_left = _pt(face_landmarks['brow_left'])
+        brow_right = _pt(face_landmarks['brow_right'])
+        brow_center = _pt(face_landmarks['brow_center'])
+        forehead = _pt(face_landmarks['forehead'])
+        center = brow_center + (forehead - brow_center) * 0.75
+        width = np.linalg.norm(brow_right - brow_left) * 1.5
+        height = max(np.linalg.norm(forehead - brow_center) * 2.4, face_width * 0.34)
+        return _make_quad(center, brow_right - brow_left, width, height, sticker_shape)
+
+    if location == "eyes":
+        eye_span = np.linalg.norm(right_eye_center - left_eye_center)
+        eye_top = (_pt(face_landmarks['left_eye_upper']) + _pt(face_landmarks['right_eye_upper'])) / 2.0
+        eye_bottom = (_pt(face_landmarks['left_eye_lower']) + _pt(face_landmarks['right_eye_lower'])) / 2.0
+        center = (eye_top + eye_bottom) / 2.0
+        width = eye_span * 1.45
+        height = max(np.linalg.norm(eye_bottom - eye_top) * 3.2, face_width * 0.24)
+        return _make_quad(center, x_axis, width, height, sticker_shape)
+
+    if location == "nose":
+        nose_left = _pt(face_landmarks['nose_left'])
+        nose_right = _pt(face_landmarks['nose_right'])
+        nose_bridge = _pt(face_landmarks['nose_bridge'])
+        nose_tip = _pt(face_landmarks['nose_tip'])
+        center = (nose_bridge + nose_tip) / 2.0
+        width = np.linalg.norm(nose_right - nose_left) * 1.6
+        height = max(np.linalg.norm(nose_tip - nose_bridge) * 2.0, face_width * 0.20)
+        return _make_quad(center, nose_right - nose_left, width, height, sticker_shape)
+
+    if location == "mouth":
+        mouth_left = _pt(face_landmarks['mouth_left'])
+        mouth_right = _pt(face_landmarks['mouth_right'])
+        mouth_upper = _pt(face_landmarks['mouth_upper'])
+        mouth_lower = _pt(face_landmarks['mouth_lower'])
+        center = (mouth_upper + mouth_lower) / 2.0
+        width = np.linalg.norm(mouth_right - mouth_left) * 1.35
+        height = max(np.linalg.norm(mouth_lower - mouth_upper) * 2.8, face_width * 0.26)
+        return _make_quad(center, mouth_right - mouth_left, width, height, sticker_shape)
+
+    if location == "cheek":
+        center = _pt(face_landmarks['left_cheek']) + vertical_axis * (face_width * 0.02)
+        width = face_width * 0.28
+        height = face_width * 0.22
+        return _make_quad(center, x_axis, width, height, sticker_shape)
+
+    if location == "right_cheek":
+        center = _pt(face_landmarks['right_cheek']) + vertical_axis * (face_width * 0.02)
+        width = face_width * 0.28
+        height = face_width * 0.22
+        return _make_quad(center, x_axis, width, height, sticker_shape)
+
+    return None
+
+
+def _warp_sticker_onto_quad(frame, sticker, quad):
+    if sticker is None or sticker.shape[2] != 4:
+        return frame
+
+    frame_h, frame_w = frame.shape[:2]
+    sticker_h, sticker_w = sticker.shape[:2]
+
+    src = np.array([
+        [0, 0],
+        [sticker_w - 1, 0],
+        [sticker_w - 1, sticker_h - 1],
+        [0, sticker_h - 1],
+    ], dtype=np.float32)
+
+    matrix = cv2.getPerspectiveTransform(src, quad.astype(np.float32))
+    warped = cv2.warpPerspective(
+        sticker,
+        matrix,
+        (frame_w, frame_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0)
+    )
+
+    alpha = warped[:, :, 3:4].astype(np.float32) / 255.0
+    if np.max(alpha) <= 0:
+        return frame
+
+    overlay = warped[:, :, :3].astype(np.float32)
+    base = frame.astype(np.float32)
+    blended = overlay * alpha + base * (1.0 - alpha)
+    return np.clip(blended, 0, 255).astype(np.uint8)
 
 
 def render_scene(frame, face_landmarks, active_content):
     """
     主渲染调度函数
     :param frame: 原始摄像头画面 (BGR)
-    :param face_landmarks: face_mesh.py 提取的关键点字典 (含 'forehead', 'nose_tip', 'angle', 'face_width' 等)
+    :param face_landmarks: face_mesh.py 提取的关键点字典
     :param active_content: 从 result_queue 获取的数据包，含 'sticker' 和 'location'
     """
     if active_content is None or active_content['sticker'] is None:
@@ -65,45 +149,12 @@ def render_scene(frame, face_landmarks, active_content):
     sticker = active_content['sticker']
     location = active_content['location']
 
-    # 提取全局人脸状态
-    angle = face_landmarks.get('angle', 0)
-    face_width = face_landmarks.get('face_width', 200)
+    quad = _build_location_quad(face_landmarks, location, sticker.shape[:2])
+    if quad is None:
+        return frame
 
-    # --- 空间匹配逻辑：根据 Agent 决策选择锚点和缩放比例 ---
-    anchor = None
-    scale_factor = 1.0
-
-    if location == "forehead":
-        # 适用于：皇冠、帽子、发卡
-        anchor = face_landmarks['forehead']
-        scale_factor = (face_width / sticker.shape[1]) * 1.5  # 贴纸宽度约为脸宽 1.5 倍
-
-    elif location == "eyes":
-        # 适用于：眼罩、眼镜
-        # 取双眼中心点作为锚点
-        anchor = face_landmarks['mid_eyes']
-        scale_factor = (face_width / sticker.shape[1]) * 1.1
-
-    elif location == "nose":
-        # 适用于：小丑红鼻子、猪鼻子
-        anchor = face_landmarks['nose_tip']
-        scale_factor = (face_width / sticker.shape[1]) * 0.4  # 鼻子贴纸通常较小
-
-    elif location == "mouth":
-        # 适用于：胡须、口罩、搞怪嘴巴
-        anchor = face_landmarks['mouth_center']
-        scale_factor = (face_width / sticker.shape[1]) * 0.8
-
-    elif location == "cheek":
-        # 适用于：腮红、面纹
-        anchor = face_landmarks['left_cheek']  # 默认贴左脸，或由 Agent 细分左右
-        scale_factor = (face_width / sticker.shape[1]) * 0.3
-
-    # --- 执行渲染 ---
-    if anchor is not None:
-        try:
-            frame = overlay_sticker(frame, sticker, anchor, angle, scale_factor)
-        except Exception as e:
-            print(f"[Renderer] 渲染出错: {e}")
-
-    return frame
+    try:
+        return _warp_sticker_onto_quad(frame, sticker, quad)
+    except Exception as e:
+        print(f"[Renderer] 渲染出错: {e}")
+        return frame

@@ -210,5 +210,18 @@
     "_meta": {
       "title": "Preview Image"
     }
+  },
+   "22": {
+    "inputs": {
+      "filename_prefix": "FaceDoodle/transparent_sticker",
+      "images": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Transparent Sticker"
+    }
   }
 }

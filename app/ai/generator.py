@@ -92,6 +92,50 @@ class ComfyClient:
         new_files.sort(key=os.path.getmtime, reverse=True)
         return new_files[0]
 
+    def _node_uses_alpha_output(self, node_id, workflow, cache=None):
+        if cache is None:
+            cache = {}
+        if node_id in cache:
+            return cache[node_id]
+
+        node = workflow.get(str(node_id), {})
+        class_type = node.get("class_type")
+
+        if class_type == "JoinImageWithAlpha":
+            cache[node_id] = True
+            return True
+
+        inputs = node.get("inputs", {})
+        for value in inputs.values():
+            if isinstance(value, list) and value:
+                parent_id = str(value[0])
+                if parent_id in workflow and self._node_uses_alpha_output(parent_id, workflow, cache):
+                    cache[node_id] = True
+                    return True
+
+        cache[node_id] = False
+        return False
+
+    def _iter_preferred_output_nodes(self, outputs, workflow):
+        def score(node_id):
+            node = workflow.get(str(node_id), {})
+            class_type = node.get("class_type", "")
+            uses_alpha = self._node_uses_alpha_output(str(node_id), workflow)
+
+            if class_type == "SaveImage" and uses_alpha:
+                return 0
+            if class_type == "SaveImage":
+                return 1
+            if class_type == "PreviewImage" and uses_alpha:
+                return 2
+            if uses_alpha:
+                return 3
+            return 4
+
+        ordered_ids = sorted(outputs.keys(), key=score)
+        for node_id in ordered_ids:
+            yield node_id, outputs[node_id]
+
     def generate_sync(self, prompt_text, workflow_name, timeout=30):
         """
         同步生成逻辑：提交任务 -> 轮询状态 -> 返回结果路径
@@ -142,9 +186,9 @@ class ComfyClient:
             if prompt_id in history_res:
                 # 任务完成，提取文件名
                 outputs = history_res[prompt_id]['outputs']
-                for node_id in outputs:
-                    if 'images' in outputs[node_id]:
-                        for image_info in outputs[node_id]['images']:
+                for node_id, output_node in self._iter_preferred_output_nodes(outputs, workflow):
+                    if 'images' in output_node:
+                        for image_info in output_node['images']:
                             downloaded_path = self._download_image(image_info, prompt_id)
                             if downloaded_path and os.path.exists(downloaded_path):
                                 return downloaded_path
