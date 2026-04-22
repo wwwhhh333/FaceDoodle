@@ -1,0 +1,14 @@
+﻿opencv-python
+mediapipe
+fastapi
+uvicorn
+openai
+diffusers
+transformers
+accelerate
+torch
+torchvision
+websockets
+aiohttp
+PyQt5
+python-multipart
