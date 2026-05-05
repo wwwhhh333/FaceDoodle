@@ -1,6 +1,7 @@
 import glob
 import os
 import cv2
+import numpy as np
 import threading
 import time
 import queue
@@ -19,8 +20,82 @@ ai_state = {
 }
 
 
+def _handle_img2img(cmd, result_queue, mock):
+    global ai_state
+    try:
+        prompt_text = cmd.get("prompt_text", "")
+        image_path = cmd.get("image_path", "")
+        target_location = cmd.get("target_location", "forehead_top")
+        scale = float(cmd.get("scale", 1.0))
+
+        # Preprocess: composite onto white bg for ControlNet (needs dark-on-light)
+        if image_path and os.path.exists(image_path):
+            raw = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+            if raw is not None and raw.shape[2] == 4:
+                canvas = np.ones((1024, 1024, 3), dtype=np.uint8) * 255
+                h, w = raw.shape[:2]
+                sf = min(900 / max(w, h), 1.0)
+                new_w, new_h = int(w * sf), int(h * sf)
+                resized = cv2.resize(raw, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                y_off = (1024 - new_h) // 2
+                x_off = (1024 - new_w) // 2
+                alpha = resized[:, :, 3:4] / 255.0
+                rgb = resized[:, :, :3]
+                roi = canvas[y_off:y_off + new_h, x_off:x_off + new_w]
+                blended = (rgb * alpha + roi * (1 - alpha)).astype(np.uint8)
+                canvas[y_off:y_off + new_h, x_off:x_off + new_w] = blended
+                preprocessed_path = os.path.join(os.path.dirname(image_path), "preprocessed_for_controlnet.png")
+                cv2.imwrite(preprocessed_path, canvas)
+                image_path = preprocessed_path
+
+        print(f"[AI Worker] img2img 模式: prompt='{prompt_text}', image='{image_path}'")
+
+        if mock:
+            mock_path = "assets/static/loading.png"
+            temp_files = glob.glob("assets/temp/*.png")
+            if temp_files:
+                temp_files.sort(key=os.path.getmtime, reverse=True)
+                mock_path = temp_files[0]
+            new_sticker = load_rgba_sticker(mock_path)
+        else:
+            comfy_client = ComfyClient()
+            generated_path = comfy_client.generate_sync(
+                prompt_text=prompt_text,
+                workflow_name="img2img_controlnet_workflow_api.json",
+                input_image_path=image_path,
+            )
+            if generated_path and os.path.exists(generated_path):
+                new_sticker = load_rgba_sticker(generated_path)
+            else:
+                new_sticker = None
+                print("[AI Worker] img2img 错误：ComfyUI 未生成有效文件")
+
+        if new_sticker is not None:
+            result_data = {
+                "sticker": new_sticker,
+                "location": target_location,
+                "scale": scale,
+                "prompt": cmd.get("display_name", prompt_text),
+                "positive_prompt": prompt_text,
+                "timestamp": time.time()
+            }
+            result_queue.put(result_data)
+            print(f"[AI Worker] img2img 任务完成, 位置: {target_location}")
+        else:
+            print("[AI Worker] img2img 错误：无法将生成结果转换为 RGBA 格式")
+
+    except Exception as e:
+        print(f"[AI Worker] img2img 异常: {str(e)}")
+    finally:
+        ai_state["is_generating"] = False
+
+
 def ai_worker_thread(user_command, result_queue, api_key, mock=False):
     global ai_state
+
+    if isinstance(user_command, dict) and user_command.get("type") == "img2img":
+        _handle_img2img(user_command, result_queue, mock)
+        return
 
     agent = FaceDoodleAgent(api_key=api_key)
 
@@ -193,7 +268,7 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                     adjustment["rotation"] += msg.get("d_angle", 0.0)
                 elif action == "scale":
                     adjustment["scale_mult"] *= msg.get("multiplier", 1.0)
-                    adjustment["scale_mult"] = max(0.2, min(5.0, adjustment["scale_mult"]))
+                    adjustment["scale_mult"] = max(0.05, adjustment["scale_mult"])
                 elif action == "reset":
                     adjustment["offset_x"] = 0.0
                     adjustment["offset_y"] = 0.0

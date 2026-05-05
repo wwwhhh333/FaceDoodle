@@ -97,6 +97,18 @@ class ComfyClient:
         new_files.sort(key=os.path.getmtime, reverse=True)
         return new_files[0]
 
+    def _upload_image(self, filepath):
+        url = f"http://{self.server_address}/upload/image"
+        try:
+            with open(filepath, 'rb') as f:
+                files = {'image': (os.path.basename(filepath), f, 'image/png')}
+                response = requests.post(url, files=files, timeout=30)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("name")
+        except requests.RequestException as e:
+            raise RuntimeError(f"图片上传到 ComfyUI 失败: {e}")
+
     def _node_uses_alpha_output(self, node_id, workflow, cache=None):
         if cache is None:
             cache = {}
@@ -141,7 +153,7 @@ class ComfyClient:
         for node_id in ordered_ids:
             yield node_id, outputs[node_id]
 
-    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None):
+    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None, input_image_path=None):
         """
         同步生成逻辑：提交任务 -> 轮询状态 -> 返回结果路径
         """
@@ -191,6 +203,22 @@ class ComfyClient:
         else:
             print("[ComfyClient] 未配置 LoRA，使用工作流默认值")
 
+        # Upload input image and inject into LoadImage node (img2img mode)
+        if input_image_path and os.path.exists(input_image_path):
+            uploaded_name = self._upload_image(input_image_path)
+            if uploaded_name:
+                load_image_set = False
+                for node in workflow.values():
+                    if node.get("class_type") == "LoadImage":
+                        node["inputs"]["image"] = uploaded_name
+                        load_image_set = True
+                        print(f"[ComfyClient] img2img: 已上传并设置 LoadImage -> {uploaded_name}")
+                        break
+                if not load_image_set:
+                    print("[ComfyClient] 警告: 工作流中未找到 LoadImage 节点，input_image_path 被忽略")
+            else:
+                print("[ComfyClient] 警告: 图片上传失败，将按 text-to-image 模式运行")
+
         # 4. 根据 prompt 生成输出文件名（取前两个逗号分隔的词组）
         slug_parts = [p.strip() for p in prompt_text.split(",") if p.strip()]
         short_prompt = "_".join(slug_parts[:2]) if len(slug_parts) >= 2 else slug_parts[0] if slug_parts else "sticker"
@@ -201,8 +229,12 @@ class ComfyClient:
                 node["inputs"]["filename_prefix"] = f"FaceDoodle/{slug}"
                 break
 
-        sampler_node = workflow.get("11")
-        if sampler_node and sampler_node.get("class_type") == "KSampler":
+        sampler_node = None
+        for nid, node in workflow.items():
+            if node.get("class_type") == "KSampler":
+                sampler_node = node
+                break
+        if sampler_node:
             sampler_node.setdefault("inputs", {})["seed"] = uuid.uuid4().int & ((1 << 63) - 1)
 
         previous_temp_files = self._snapshot_temp_files()

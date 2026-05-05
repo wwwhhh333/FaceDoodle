@@ -95,7 +95,7 @@ class FaceDoodleWindow(QMainWindow):
         root.setSpacing(0)
 
         # ── 1. 顶栏 ──
-        top_bar = GradientBar("🎨  FaceDoodle  AI 贴纸工坊")
+        top_bar = GradientBar("FaceDoodle AI 贴纸工坊")
         settings_btn = QPushButton("⚙️")
         settings_btn.setFixedSize(40, 40)
         settings_btn.setCursor(Qt.PointingHandCursor)
@@ -131,7 +131,7 @@ class FaceDoodleWindow(QMainWindow):
         rp_layout.setContentsMargins(8, 12, 8, 8)
         rp_layout.setSpacing(6)
 
-        gallery_label = QLabel("📚 我的贴纸")
+        gallery_label = QLabel("我的贴纸")
         gallery_label.setStyleSheet(
             "color: #555; font-size: 15px; font-weight: bold; background: transparent; border: none;"
         )
@@ -149,7 +149,7 @@ class FaceDoodleWindow(QMainWindow):
         content_row.addWidget(right_panel)
         root.addLayout(content_row, stretch=1)
 
-        self.edit_indicator = QLabel("🖊 编辑模式: 开启", self)
+        self.edit_indicator = QLabel("编辑模式: 开启", self)
         self.edit_indicator.setStyleSheet(
             "color: #059669; background: rgba(255,255,255,230); font-size: 14px; "
             "padding: 6px 14px; border: 1px solid #10b981;"
@@ -165,11 +165,11 @@ class FaceDoodleWindow(QMainWindow):
         input_layout.setSpacing(12)
 
         self.input_box = QLineEdit()
-        self.input_box.setPlaceholderText("💡 描述你的创意，例如：一副赛博朋克风格的护目镜...")
+        self.input_box.setPlaceholderText("描述你的创意，例如：一副赛博朋克风格的护目镜...")
         self.input_box.returnPressed.connect(self.send_command)
         input_layout.addWidget(self.input_box)
 
-        self.send_btn = StyledButton("✨ 生成贴纸", "#2c2c2c", "#444")
+        self.send_btn = StyledButton("生成贴纸", "#2c2c2c", "#444")
         self.send_btn.clicked.connect(self.send_command)
         input_layout.addWidget(self.send_btn)
 
@@ -182,41 +182,41 @@ class FaceDoodleWindow(QMainWindow):
         action_layout.setContentsMargins(16, 8, 16, 10)
         action_layout.setSpacing(10)
 
-        self.edit_btn = StyledButton("🖊 编辑", "#7c3aed", "#a855f7")
+        self.edit_btn = StyledButton("编辑", "#7c3aed", "#a855f7")
         self.edit_btn.setCheckable(True)
         self.edit_btn.clicked.connect(self._toggle_edit_mode)
         action_layout.addWidget(self.edit_btn)
 
-        self.reset_btn = StyledButton("🔄 重置位置", "#94a3b8", "#b0bec5")
+        self.reset_btn = StyledButton("重置位置", "#94a3b8", "#b0bec5")
         self.reset_btn.clicked.connect(lambda: self.adjustment_queue.put({"action": "reset"}))
         action_layout.addWidget(self.reset_btn)
 
-        self.fav_btn = StyledButton("⭐ 收藏", "#f59e0b", "#fbbf24")
+        self.fav_btn = StyledButton("收藏", "#f59e0b", "#fbbf24")
         self.fav_btn.clicked.connect(self._toggle_favorite)
         action_layout.addWidget(self.fav_btn)
 
-        self.del_btn = StyledButton("🗑 删除", "#ef4444", "#f87171")
+        self.del_btn = StyledButton("删除", "#ef4444", "#f87171")
         self.del_btn.clicked.connect(self._delete_current_sticker)
         action_layout.addWidget(self.del_btn)
 
         action_layout.addStretch()
 
-        self.import_btn = StyledButton("📥 导入", "#06b6d4", "#22d3ee")
+        self.import_btn = StyledButton("导入", "#06b6d4", "#22d3ee")
         self.import_btn.clicked.connect(self._import_image)
         action_layout.addWidget(self.import_btn)
 
-        self.draw_btn = StyledButton("🎨 绘制", "#10b981", "#34d399")
+        self.draw_btn = StyledButton("绘制", "#10b981", "#34d399")
         self.draw_btn.clicked.connect(self._open_drawing_dialog)
         action_layout.addWidget(self.draw_btn)
 
-        self.edit_sticker_btn = StyledButton("✏️ 编辑贴纸", "#6366f1", "#818cf8")
+        self.edit_sticker_btn = StyledButton("编辑贴纸", "#6366f1", "#818cf8")
         self.edit_sticker_btn.clicked.connect(self._open_edit_sticker_dialog)
         action_layout.addWidget(self.edit_sticker_btn)
 
         root.addWidget(action_row)
 
         # ── 5. 状态栏 ──
-        self.status_label = QLabel("💡 Ctrl+E 切换编辑 | 左键移动 右键旋转 滚轮缩放 双击重置")
+        self.status_label = QLabel("Ctrl+E 切换编辑 | 左键移动 右键旋转 滚轮缩放 双击重置")
         self.status_label.setStyleSheet(
             "color: #999; font-size: 12px; padding: 5px; background: #f0f0f5; border: none;"
         )
@@ -330,7 +330,7 @@ class FaceDoodleWindow(QMainWindow):
         return None, False
 
     def _open_drawing_dialog(self):
-        dlg = DrawingDialog(self, self.gallery_queue)
+        dlg = DrawingDialog(self, self.gallery_queue, self.command_queue)
         if dlg.exec_() == DrawingDialog.Accepted:
             self._load_gallery()
 
@@ -342,7 +342,7 @@ class FaceDoodleWindow(QMainWindow):
         if sticker_img is None:
             QMessageBox.warning(self, "错误", "无法加载该贴纸，文件可能已被删除。")
             return
-        dlg = DrawingDialog(self, self.gallery_queue, initial_sticker=sticker_img)
+        dlg = DrawingDialog(self, self.gallery_queue, self.command_queue, initial_sticker=sticker_img)
         if dlg.exec_() == DrawingDialog.Accepted:
             self._load_gallery()
 
@@ -357,7 +357,7 @@ class FaceDoodleWindow(QMainWindow):
             f"AI 模型: {cfg['agent']['model_id']}\n"
             f"最近指令: {', '.join(recent[:5]) if recent else '无'}"
         )
-        QMessageBox.information(self, "⚙️  设置", info)
+        QMessageBox.information(self, "设置", info)
 
     # ── 编辑模式 ──
 
@@ -365,7 +365,7 @@ class FaceDoodleWindow(QMainWindow):
         self._edit_mode = not self._edit_mode
         self.adjustment_queue.put({"action": "toggle_edit"})
         self.edit_btn.setChecked(self._edit_mode)
-        self.edit_btn.setText("🖊 编辑中" if self._edit_mode else "🖊 编辑")
+        self.edit_btn.setText("编辑中" if self._edit_mode else "编辑")
         if self._edit_mode:
             self.edit_indicator.setVisible(True)
             self._position_indicator()
@@ -457,7 +457,7 @@ class FaceDoodleWindow(QMainWindow):
         self.command_queue.put(text)
         storage.add_recent_prompt(text)
         self.input_box.clear()
-        self.input_box.setPlaceholderText("✨ AI 正在生成中，请稍候...")
+        self.input_box.setPlaceholderText("AI 正在生成中，请稍候...")
         self.input_box.setEnabled(False)
         self.send_btn.setEnabled(False)
         QTimer.singleShot(5000, self._reenable_input)
@@ -466,7 +466,7 @@ class FaceDoodleWindow(QMainWindow):
         if not self._edit_mode:
             self.input_box.setEnabled(True)
             self.send_btn.setEnabled(True)
-        self.input_box.setPlaceholderText("💡 描述你的创意，例如：一副赛博朋克风格的护目镜...")
+        self.input_box.setPlaceholderText("描述你的创意，例如：一副赛博朋克风格的护目镜...")
 
     # ── 视频显示 ──
 

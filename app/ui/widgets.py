@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QScrollArea,
+from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit, QPushButton, QScrollArea,
                              QHBoxLayout, QVBoxLayout, QSlider, QColorDialog,
                              QComboBox, QDialog, QGridLayout)
 from PyQt5.QtGui import (QPixmap, QImage, QPainter, QColor,
@@ -84,8 +84,8 @@ class StyledButton(QPushButton):
                 background: {color};
                 color: {text_color};
                 border: none;
-                padding: 10px 20px;
-                font-size: 15px;
+                padding: 14px 28px;
+                font-size: 16px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
@@ -337,11 +337,12 @@ class DrawingCanvas(QWidget):
 
 
 class DrawingDialog(QDialog):
-    def __init__(self, parent, gallery_queue, initial_sticker=None):
+    def __init__(self, parent, gallery_queue, command_queue=None, initial_sticker=None):
         super().__init__(parent)
         self.gallery_queue = gallery_queue
-        self.setWindowTitle("🎨 绘制贴纸")
-        self.setFixedSize(660, 730)
+        self.command_queue = command_queue
+        self.setWindowTitle("绘制贴纸")
+        self.setFixedSize(660, 780)
         self.setStyleSheet("""
             QDialog { background: #f5f5f8; }
             QLabel { color: #444; font-size: 14px; }
@@ -404,7 +405,7 @@ class DrawingDialog(QDialog):
             btn.clicked.connect(lambda _, c=bgra: self.canvas.set_brush_color(c))
             color_grid.addWidget(btn, 0, i)
 
-        custom_btn = QPushButton("🌈")
+        custom_btn = QPushButton("+")
         custom_btn.setFixedSize(32, 32)
         custom_btn.setCursor(Qt.PointingHandCursor)
         custom_btn.setToolTip("自定义颜色")
@@ -417,38 +418,38 @@ class DrawingDialog(QDialog):
         tool_row = QHBoxLayout()
         tool_row.setSpacing(8)
 
-        self.brush_btn = StyledButton("🖊 画笔", "#667eea", "#818cf8")
+        self.brush_btn = StyledButton("画笔", "#667eea", "#818cf8")
         self.brush_btn.clicked.connect(self._set_brush_mode)
         tool_row.addWidget(self.brush_btn)
 
-        self.eraser_btn = StyledButton("🧹 橡皮", "#94a3b8", "#b0bec5")
+        self.eraser_btn = StyledButton("橡皮", "#94a3b8", "#b0bec5")
         self.eraser_btn.clicked.connect(self._set_eraser_mode)
         tool_row.addWidget(self.eraser_btn)
 
-        undo_btn = StyledButton("↩ 撤销", "#f59e0b", "#fbbf24")
+        undo_btn = StyledButton("撤销", "#f59e0b", "#fbbf24")
         undo_btn.clicked.connect(self.canvas.undo)
         tool_row.addWidget(undo_btn)
 
-        clear_btn = StyledButton("🗑 清除画布", "#ef4444", "#f87171")
+        clear_btn = StyledButton("清除画布", "#ef4444", "#f87171")
         clear_btn.clicked.connect(self.canvas.clear_canvas)
         tool_row.addWidget(clear_btn)
 
-        self.mirror_btn = StyledButton("🪞 镜像", "#8b5cf6", "#a78bfa")
+        self.mirror_btn = StyledButton("镜像", "#8b5cf6", "#a78bfa")
         self.mirror_btn.setCheckable(True)
         self.mirror_btn.clicked.connect(self._toggle_mirror)
         tool_row.addWidget(self.mirror_btn)
 
         tool_row.addStretch()
 
-        import_btn = StyledButton("📥 导入", "#06b6d4", "#22d3ee")
+        import_btn = StyledButton("导入", "#06b6d4", "#22d3ee")
         import_btn.clicked.connect(self._import_image)
         tool_row.addWidget(import_btn)
 
-        export_btn = StyledButton("📤 导出", "#14b8a6", "#2dd4bf")
+        export_btn = StyledButton("导出", "#14b8a6", "#2dd4bf")
         export_btn.clicked.connect(self._export_image)
         tool_row.addWidget(export_btn)
 
-        self.ext_edit_btn = StyledButton("🔧 外部编辑", "#f97316", "#fb923c")
+        self.ext_edit_btn = StyledButton("外部编辑", "#f97316", "#fb923c")
         self.ext_edit_btn.clicked.connect(self._open_external_editor)
         tool_row.addWidget(self.ext_edit_btn)
 
@@ -464,6 +465,23 @@ class DrawingDialog(QDialog):
         hint_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(hint_label)
 
+        # AI 精炼
+        refine_row = QHBoxLayout()
+        refine_row.setSpacing(8)
+        refine_row.addWidget(QLabel("AI 精炼:"))
+
+        self.refine_input = QLineEdit()
+        self.refine_input.setPlaceholderText("描述风格，如：水彩画风、赛博朋克...")
+        self.refine_input.returnPressed.connect(self._ai_refine)
+        refine_row.addWidget(self.refine_input, stretch=1)
+
+        self.refine_btn = StyledButton("AI 精炼", "#8b5cf6", "#a78bfa")
+        self.refine_btn.clicked.connect(self._ai_refine)
+        self.refine_btn.setEnabled(self.command_queue is not None)
+        refine_row.addWidget(self.refine_btn)
+
+        layout.addLayout(refine_row)
+
         # 位置 + 应用
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(10)
@@ -476,7 +494,7 @@ class DrawingDialog(QDialog):
 
         bottom_row.addStretch()
 
-        apply_btn = StyledButton("📋 应用到人脸", "#10b981", "#34d399")
+        apply_btn = StyledButton("应用到人脸", "#10b981", "#34d399")
         apply_btn.clicked.connect(self._apply)
         bottom_row.addWidget(apply_btn)
 
@@ -492,7 +510,7 @@ class DrawingDialog(QDialog):
     def _toggle_mirror(self):
         on = self.canvas.toggle_mirror()
         self.mirror_btn.setChecked(on)
-        self.mirror_btn.setText("🪞 镜像中" if on else "🪞 镜像")
+        self.mirror_btn.setText("镜像中" if on else "镜像")
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -573,7 +591,7 @@ class DrawingDialog(QDialog):
                 f"或在 config.json 中设置 external_editor.path。\n\n错误: {e}")
             return
 
-        self.ext_edit_btn.setText("🔄 等待保存...")
+        self.ext_edit_btn.setText("等待保存...")
         self.ext_edit_btn.setEnabled(False)
 
         self._ext_watch_timer = QTimer(self)
@@ -593,7 +611,7 @@ class DrawingDialog(QDialog):
             updated = load_rgba_sticker(self._ext_file_path)
             if updated is not None:
                 self.canvas.load_image(updated)
-                self.ext_edit_btn.setText("✅ 已同步")
+                self.ext_edit_btn.setText("已同步")
         else:
             return
 
@@ -607,6 +625,33 @@ class DrawingDialog(QDialog):
         if qcolor.isValid():
             bgra = (qcolor.blue(), qcolor.green(), qcolor.red(), 255)
             self.canvas.set_brush_color(bgra)
+
+    def _ai_refine(self):
+        if self.command_queue is None:
+            return
+        refine_text = self.refine_input.text().strip()
+        result = self.canvas.get_result()
+        if result is None:
+            return
+        temp_dir = "assets/temp"
+        os.makedirs(temp_dir, exist_ok=True)
+        temp_path = os.path.join(temp_dir, "doodle_img2img_input.png")
+        cv2.imwrite(temp_path, result)
+        style_prefix = "flat vector sticker, front view, flat lay, clean outline, solid white background, icon design"
+        full_prompt = f"{style_prefix}, {refine_text}" if refine_text else style_prefix
+        region = self.location_combo.currentData()
+        self.command_queue.put({
+            "type": "img2img",
+            "prompt_text": full_prompt,
+            "image_path": os.path.abspath(temp_path),
+            "target_location": region,
+            "scale": 1.0,
+            "display_name": refine_text if refine_text else "简笔画精炼",
+        })
+        self.refine_btn.setText("精炼中...")
+        self.refine_btn.setEnabled(False)
+        self.refine_input.setEnabled(False)
+        QTimer.singleShot(300, self.accept)
 
     def _apply(self):
         result = self.canvas.get_result()
