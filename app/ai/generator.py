@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import time
 import uuid
 from urllib.parse import quote
@@ -11,9 +12,13 @@ import requests
 
 
 class ComfyClient:
-    def __init__(self, server_address="127.0.0.1:8188"):
+    def __init__(self, server_address=None):
+        from app.utils.config_loader import get_config
+        self._cfg = get_config()
+        if server_address is None:
+            server_address = self._cfg.get("comfyui", {}).get("server_address", "127.0.0.1:8188")
         self.server_address = server_address
-        self.output_dir = "assets/temp"  # 确保此目录存在
+        self.output_dir = "assets/temp"
         os.makedirs(self.output_dir, exist_ok=True)
 
     def _resolve_local_output_path(self, image_info):
@@ -33,8 +38,8 @@ class ComfyClient:
         candidate_roots.extend([
             os.path.join(cwd, "output"),
             os.path.join(cwd, "ComfyUI", "output"),
-            os.path.join("D:/ComfyUI", image_type),
-            os.path.join("D:/ComfyUI", "output"),
+            os.path.join(os.path.expanduser("~"), "ComfyUI", image_type),
+            os.path.join(os.path.expanduser("~"), "ComfyUI", "output"),
         ])
 
         for root in candidate_roots:
@@ -64,7 +69,7 @@ class ComfyClient:
             response = requests.get(url, timeout=30)
             response.raise_for_status()
 
-            safe_name = f"{prompt_id}_{os.path.basename(filename)}"
+            safe_name = os.path.basename(filename)
             local_path = os.path.join(self.output_dir, safe_name)
             with open(local_path, "wb") as file_obj:
                 file_obj.write(response.content)
@@ -136,29 +141,65 @@ class ComfyClient:
         for node_id in ordered_ids:
             yield node_id, outputs[node_id]
 
-    def generate_sync(self, prompt_text, workflow_name, timeout=30):
+    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None):
         """
         同步生成逻辑：提交任务 -> 轮询状态 -> 返回结果路径
         """
+        if timeout is None:
+            timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 120)
+
         # 1. 加载工作流 JSON
         workflow_path = os.path.join(os.getcwd(), "app", "workflows", workflow_name)
         with open(workflow_path, 'r', encoding='utf-8') as f:
             workflow = json.load(f)
 
-        # 2. 只更新正向提示词节点，避免把负向提示词也覆盖掉
+        # 2. 注入提示词
         prompt_updated = False
+        negative_updated = False
         for node_id, node in workflow.items():
-            if node.get("_meta", {}).get("title") != "CLIP Text Encode (Prompt)":
-                continue
-
-            existing_text = str(node.get("inputs", {}).get("text", "")).strip()
-            if existing_text or node_id == "8":
+            title = node.get("_meta", {}).get("title", "")
+            if title == "CLIP Text Encode (Prompt)":
                 node["inputs"]["text"] = prompt_text
                 prompt_updated = True
-                break
+            elif title == "CLIP Text Encode (Negative)":
+                if negative_prompt:
+                    node["inputs"]["text"] = negative_prompt
+                elif not str(node.get("inputs", {}).get("text", "")).strip():
+                    node["inputs"]["text"] = self._cfg.get("generation", {}).get(
+                        "negative_prompt",
+                        "photo, realistic, 3D, shadow, background, blur, noisy edges"
+                    )
+                negative_updated = True
 
         if not prompt_updated:
             raise ValueError("工作流中未找到可用的正向提示词节点")
+
+        # 3. LoRA 名称覆盖
+        lora_cfg = self._cfg.get("model", {}).get("lora", {})
+        if lora_cfg:
+            for node in workflow.values():
+                if node.get("class_type") == "LoraLoader":
+                    if lora_cfg.get("name"):
+                        node["inputs"]["lora_name"] = lora_cfg["name"]
+                        print(f"[ComfyClient] 使用 LoRA: {lora_cfg['name']}")
+                    if lora_cfg.get("strength_model") is not None:
+                        node["inputs"]["strength_model"] = lora_cfg["strength_model"]
+                    if lora_cfg.get("strength_clip") is not None:
+                        node["inputs"]["strength_clip"] = lora_cfg["strength_clip"]
+                    print(f"[ComfyClient] LoRA 强度: model={node['inputs'].get('strength_model')}, clip={node['inputs'].get('strength_clip')}")
+                    break
+        else:
+            print("[ComfyClient] 未配置 LoRA，使用工作流默认值")
+
+        # 4. 根据 prompt 生成输出文件名（取前两个逗号分隔的词组）
+        slug_parts = [p.strip() for p in prompt_text.split(",") if p.strip()]
+        short_prompt = "_".join(slug_parts[:2]) if len(slug_parts) >= 2 else slug_parts[0] if slug_parts else "sticker"
+        slug = re.sub(r'[^\w]', '_', short_prompt.lower())
+        slug = re.sub(r'_+', '_', slug).strip('_')[:50]
+        for node in workflow.values():
+            if node.get("class_type") == "SaveImage":
+                node["inputs"]["filename_prefix"] = f"FaceDoodle/{slug}"
+                break
 
         sampler_node = workflow.get("11")
         if sampler_node and sampler_node.get("class_type") == "KSampler":
@@ -168,11 +209,40 @@ class ComfyClient:
 
         # 3. 提交任务给 ComfyUI
         p = {"prompt": workflow}
-        res = requests.post(
-            f"http://{self.server_address}/prompt",
-            json=p,
-            timeout=30,
-        ).json()
+        try:
+            http_res = requests.post(
+                f"http://{self.server_address}/prompt",
+                json=p,
+                timeout=30,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(
+                f"无法连接 ComfyUI ({self.server_address})，请确认 ComfyUI 已启动。"
+                f"\n  原始错误: {e}"
+            )
+
+        if http_res.status_code != 200:
+            raise RuntimeError(
+                f"ComfyUI 返回 HTTP {http_res.status_code}。"
+                f"\n  响应内容: {http_res.text[:500]}"
+            )
+
+        res = http_res.json()
+
+        if "prompt_id" not in res:
+            error_msg = res.get("error", {})
+            if error_msg:
+                detail = error_msg.get("message", str(error_msg))
+                extra = error_msg.get("extra_info", "")
+                raise RuntimeError(
+                    f"ComfyUI 工作流提交失败: {detail}"
+                    + (f"\n  详细信息: {extra}" if extra else "")
+                    + "\n  可能原因: LoRA 文件缺失、节点配置错误、或模型文件不匹配"
+                )
+            raise RuntimeError(
+                f"ComfyUI 返回了异常的响应: {json.dumps(res, ensure_ascii=False)[:500]}"
+            )
+
         prompt_id = res['prompt_id']
 
         # 4. 轮询历史记录，等待任务完成
@@ -189,13 +259,13 @@ class ComfyClient:
                 for node_id, output_node in self._iter_preferred_output_nodes(outputs, workflow):
                     if 'images' in output_node:
                         for image_info in output_node['images']:
-                            downloaded_path = self._download_image(image_info, prompt_id)
-                            if downloaded_path and os.path.exists(downloaded_path):
-                                return downloaded_path
-
                             local_path = self._resolve_local_output_path(image_info)
                             if local_path and os.path.exists(local_path):
                                 return local_path
+
+                            downloaded_path = self._download_image(image_info, prompt_id)
+                            if downloaded_path and os.path.exists(downloaded_path):
+                                return downloaded_path
 
                 if history_res[prompt_id].get("status", {}).get("completed"):
                     fallback_file = self._find_new_temp_file(previous_temp_files)

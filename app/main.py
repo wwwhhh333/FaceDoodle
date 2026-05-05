@@ -1,50 +1,61 @@
-﻿import sys
+import sys
 import os
-from multiprocessing import Process, Queue
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from multiprocessing import Process, Queue, Event
 from PyQt5.QtWidgets import QApplication
 from app.core.tracker import producer, consumer
 from app.ui.main_window import FaceDoodleWindow
+from app.utils.config_loader import load_config
 
-MODELSCOPE_API_KEY = os.getenv("MODELSCOPE_API_KEY")
+API_KEY = os.getenv("DEEPSEEK_API_KEY") or os.getenv("MODELSCOPE_API_KEY")
+MOCK_MODE = "--mock" in sys.argv
+
 
 def main():
-    # 1. 初始化进程间通信队列
-    # frame_queue: 生产者 -> 消费者 (原始画面)
-    frame_queue = Queue(maxsize=2)
-    # display_queue: 消费者 -> UI (带特效的画面)
-    display_queue = Queue(maxsize=2)
-    # command_queue: UI -> 消费者 (用户文字指令)
-    command_queue = Queue(maxsize=5)
+    config = load_config()
+    queue_cfg = config.get("queue", {})
 
-    # 2. 启动视频流水线子进程
-    print("[System] 正在启动视频流与 AI 消费者进程...")
+    frame_queue = Queue(maxsize=queue_cfg.get("frame_maxsize", 5))
+    display_queue = Queue(maxsize=queue_cfg.get("display_maxsize", 5))
+    command_queue = Queue(maxsize=queue_cfg.get("command_maxsize", 5))
+    adjustment_queue = Queue(maxsize=20)
+    stop_event = Event()
 
-    p_producer = Process(target=producer, args=(frame_queue,))
+    print(f"[System] 正在启动视频流与 AI 消费者进程... {'(Mock 模式: 跳过 ComfyUI)' if MOCK_MODE else ''}")
+
+    p_producer = Process(target=producer, args=(frame_queue, stop_event))
     p_consumer = Process(target=consumer, args=(
         frame_queue,
         display_queue,
         command_queue,
-        MODELSCOPE_API_KEY
+        adjustment_queue,
+        API_KEY,
+        stop_event,
+        MOCK_MODE,
     ))
 
     p_producer.start()
     p_consumer.start()
 
-    # 3. 启动 PyQt5 主界面 (运行在主进程)
     print("[System] 正在启动图形界面...")
     app = QApplication(sys.argv)
-    window = FaceDoodleWindow(display_queue, command_queue)
+    window = FaceDoodleWindow(display_queue, command_queue, adjustment_queue)
     window.show()
 
-    # 阻塞，直到关闭窗口
     exit_code = app.exec_()
 
-    # 4. 安全退出：清理子进程
     print("[System] 正在关闭系统，清理子进程...")
-    p_producer.terminate()
-    p_consumer.terminate()
-    p_producer.join()
-    p_consumer.join()
+    stop_event.set()
+
+    p_producer.join(timeout=5)
+    p_consumer.join(timeout=5)
+
+    if p_producer.is_alive():
+        p_producer.terminate()
+    if p_consumer.is_alive():
+        p_consumer.terminate()
 
     sys.exit(exit_code)
 

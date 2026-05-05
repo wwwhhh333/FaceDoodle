@@ -1,7 +1,19 @@
 # MediaPipe 468 关键点提取
 
+import cv2
 import mediapipe as mp
 import numpy as np
+
+SOLVEPNP_MODEL_POINTS = np.array([
+    [0.0, 0.0, 0.0],
+    [0.0, 0.17, -0.04],
+    [-0.08, -0.05, 0.04],
+    [0.08, -0.05, 0.04],
+    [-0.06, 0.10, 0.02],
+    [0.06, 0.10, 0.02],
+], dtype=np.float32)
+
+SOLVEPNP_LM_INDICES = [1, 152, 33, 263, 61, 291]
 
 
 class FaceDetector:
@@ -11,16 +23,23 @@ class FaceDetector:
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             static_image_mode=False,
             max_num_faces=1,
-            refine_landmarks=True
+            refine_landmarks=False,
+            min_detection_confidence=0.4,
+            min_tracking_confidence=0.4,
         )
+        self._miss_counter = 0
+        self._cached_landmarks = None
 
     def get_landmarks(self, rgb_frame):
-        """
-        处理图像并返回 AR 渲染所需的关键面部数据
-        """
         results = self.face_mesh.process(rgb_frame)
         if not results.multi_face_landmarks:
-            return None
+            self._miss_counter += 1
+            if self._miss_counter > 5:
+                self._cached_landmarks = None
+                return None
+            return self._cached_landmarks
+
+        self._miss_counter = 0
 
         landmarks = results.multi_face_landmarks[0].landmark
         h, w, _ = rgb_frame.shape
@@ -78,8 +97,39 @@ class FaceDetector:
         d_x = right_eye_center[0] - left_eye_center[0]
         angle = np.degrees(np.arctan2(d_y, d_x))
 
-        return {
+        def _rect_from_indices(indices, margin=0.0):
+            pts = np.array([get_pt(i) for i in indices])
+            x, y = np.min(pts[:, 0]), np.min(pts[:, 1])
+            w, h = np.max(pts[:, 0]) - x, np.max(pts[:, 1]) - y
+            mw, mh = w * margin, h * margin
+            return (float(x - mw), float(y - mh), float(w + mw * 2), float(h + mh * 2))
+
+        LANDMARK_GROUPS = {
+            "forehead_full": ([8, 9, 10, 67, 68, 69, 103, 104, 108, 109, 151, 299, 300, 301, 333, 334, 337, 338], 0.0),
+            "forehead_top": ([8, 9, 10, 67, 68, 69, 108, 109, 151, 337, 338, 299, 300, 301], 0.1),
+            "brows": ([70, 105, 107, 336, 334, 300], 0.2),
+            "eyes": ([33, 133, 159, 145, 362, 263, 386, 374, 70, 300], 0.3),
+            "nose": ([1, 2, 4, 5, 6, 19, 98, 168, 195, 197, 327], 0.25),
+            "mouth": ([0, 13, 14, 17, 37, 61, 78, 81, 267, 291, 308, 311, 402], 0.3),
+            "cheek_left": ([36, 50, 101, 117, 118, 119, 121, 143, 203, 205, 207, 234], 0.15),
+            "cheek_right": ([266, 280, 329, 330, 346, 347, 348, 349, 423, 425, 454], 0.15),
+            "chin": ([152, 148, 149, 150, 175, 176, 377, 378, 379], 0.2),
+            "jaw": ([172, 136, 150, 149, 176, 148, 152, 377, 400, 378, 379, 365, 397], 0.1),
+        }
+
+        rects = {}
+        for name, (indices, margin) in LANDMARK_GROUPS.items():
+            rects[name] = _rect_from_indices(indices, margin)
+
+        # forehead 系列额外向上扩展用于猫耳/帽子
+        for key in ("forehead_full", "forehead_top"):
+            if key in rects:
+                x, y, w, h = rects[key]
+                rects[key] = (x, y - h * 0.5, w, h * 1.5)
+
+        result = {
             "forehead": tuple(forehead),
+            "landmark_rects": rects,
             "nose_tip": tuple(nose_tip),
             "nose_bridge": tuple(nose_bridge),
             "nose_left": tuple(nose_left),
@@ -114,3 +164,35 @@ class FaceDetector:
             "face_height": float(face_height),
             "angle": float(angle)
         }
+
+        image_points = np.array([
+            [landmarks[i].x * w, landmarks[i].y * h]
+            for i in SOLVEPNP_LM_INDICES
+        ], dtype=np.float32)
+
+        focal = float(w)
+        camera_matrix = np.array([
+            [focal, 0, w / 2],
+            [0, focal, h / 2],
+            [0, 0, 1],
+        ], dtype=np.float32)
+
+        try:
+            ok, rvec, tvec = cv2.solvePnP(
+                SOLVEPNP_MODEL_POINTS, image_points, camera_matrix,
+                np.zeros((4, 1)), flags=cv2.SOLVEPNP_ITERATIVE
+            )
+            if ok:
+                result["rvec"] = rvec
+                result["tvec"] = tvec
+                result["camera_matrix"] = camera_matrix
+        except cv2.error:
+            pass
+
+        result["model_face_width"] = 0.14
+
+        self._cached_landmarks = result
+        return result
+
+    def close(self):
+        self.face_mesh.close()
