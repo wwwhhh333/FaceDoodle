@@ -105,6 +105,7 @@ class FaceDetector:
             return (float(x - mw), float(y - mh), float(w + mw * 2), float(h + mh * 2))
 
         LANDMARK_GROUPS = {
+            "full_face": ([10, 151, 108, 337, 234, 454, 152, 172, 397, 136, 365], 0.1),
             "forehead_full": ([8, 9, 10, 67, 68, 69, 103, 104, 108, 109, 151, 299, 300, 301, 333, 334, 337, 338], 0.0),
             "forehead_top": ([8, 9, 10, 67, 68, 69, 108, 109, 151, 337, 338, 299, 300, 301], 0.1),
             "head_top": ([8, 9, 10, 108, 109, 151, 337, 338], 0.0),
@@ -196,6 +197,14 @@ class FaceDetector:
             pass
 
         result["model_face_width"] = 0.14
+
+        all_pts = []
+        for lm in landmarks:
+            all_pts.append((lm.x * w, lm.y * h))
+        result["all_landmarks"] = all_pts
+
+        mesh_conns = list(self.mp_face_mesh.FACEMESH_CONTOURS)
+        result["mesh_connections"] = mesh_conns
 
         self._cached_landmarks = result
         return result

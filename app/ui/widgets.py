@@ -31,6 +31,7 @@ class ThumbnailCard(QWidget):
         super().__init__(parent)
         self.sticker_id = sticker_id
         self._selected = False
+        self._active = False
         self._fav = is_favorite
         self.setFixedSize(100, 120)
         self.setCursor(Qt.PointingHandCursor)
@@ -63,7 +64,19 @@ class ThumbnailCard(QWidget):
 
     def set_selected(self, sel):
         self._selected = sel
-        color = "#333" if sel else "#ddd"
+        self._update_border()
+
+    def set_active(self, act):
+        self._active = act
+        self._update_border()
+
+    def _update_border(self):
+        if self._selected:
+            color = "#333"
+        elif self._active:
+            color = "#10b981"
+        else:
+            color = "#ddd"
         self.thumb_label.setStyleSheet(
             f"background: #f0f0f5; border: 2px solid {color};"
         )
@@ -148,17 +161,29 @@ class GalleryScrollArea(QScrollArea):
         self.layout = QVBoxLayout(self.container)
         self.layout.setContentsMargins(8, 4, 8, 4)
         self.layout.setSpacing(6)
+
+        self._placeholder = QLabel("还没有贴纸\n输入描述来生成吧")
+        self._placeholder.setAlignment(Qt.AlignCenter)
+        self._placeholder.setWordWrap(True)
+        self._placeholder.setStyleSheet(
+            "color: #bbb; font-size: 13px; background: transparent; border: none; padding: 40px 12px;"
+        )
+        self._placeholder.setVisible(False)
+        self.layout.addWidget(self._placeholder)
         self.layout.addStretch()
         self.setWidget(self.container)
+
+    def show_placeholder(self, show):
+        self._placeholder.setVisible(show)
 
     def add_card(self, card):
         self.layout.insertWidget(self.layout.count() - 1, card)
 
     def clear_cards(self):
-        while self.layout.count() > 1:
-            item = self.layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        for i in range(self.layout.count() - 1, -1, -1):
+            w = self.layout.itemAt(i).widget()
+            if w is not None and w is not self._placeholder:
+                w.deleteLater()
 
 
 # ── 手绘贴纸组件 ──
@@ -177,6 +202,7 @@ PRESET_COLORS = [
 ]
 
 REGION_OPTIONS = [
+    ("全脸", "full_face"),
     ("头顶", "head_top"),
     ("额头", "forehead_top"),
     ("眼睛", "eyes"),

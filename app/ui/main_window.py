@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QShortcut, QMessageBox,
-                             QFileDialog, QDialog, QComboBox)
+                             QFileDialog, QDialog, QComboBox, QSlider)
 from PyQt5.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 
@@ -13,7 +13,8 @@ from app.utils import storage
 
 class VideoUpdateThread(QThread):
     change_pixmap_signal = pyqtSignal(np.ndarray)
-    sticker_saved_signal = pyqtSignal()
+    sticker_saved_signal = pyqtSignal(str)
+    generation_failed_signal = pyqtSignal(str)
 
     def __init__(self, display_queue, gallery_queue):
         super().__init__()
@@ -27,8 +28,12 @@ class VideoUpdateThread(QThread):
                 item = self.display_queue.get(block=True, timeout=0.1)
                 if isinstance(item, np.ndarray):
                     self.change_pixmap_signal.emit(item)
-                elif isinstance(item, dict) and item.get("action") == "sticker_saved":
-                    self.sticker_saved_signal.emit()
+                elif isinstance(item, dict):
+                    action = item.get("action")
+                    if action == "sticker_saved":
+                        self.sticker_saved_signal.emit(item.get("sticker_id", ""))
+                    elif action == "generation_failed":
+                        self.generation_failed_signal.emit(item.get("error", "生成失败"))
             except Exception:
                 pass
 
@@ -38,12 +43,13 @@ class VideoUpdateThread(QThread):
 
 
 class FaceDoodleWindow(QMainWindow):
-    def __init__(self, display_queue, command_queue, adjustment_queue, gallery_queue):
+    def __init__(self, display_queue, command_queue, adjustment_queue, gallery_queue, draw_queue):
         super().__init__()
         self.display_queue = display_queue
         self.command_queue = command_queue
         self.adjustment_queue = adjustment_queue
         self.gallery_queue = gallery_queue
+        self.draw_queue = draw_queue
 
         self._edit_mode = False
         self._mouse_down = False
@@ -51,7 +57,19 @@ class FaceDoodleWindow(QMainWindow):
         self._last_mouse_pos = None
         self._frame_size = None
         self._current_sticker_id = None
+        self._active_sticker_id = None
         self._gallery_items = {}
+
+        self._face_draw_mode = False
+        self._face_draw_region = "full_face"
+        self._face_draw_brush_size = 12
+        self._face_draw_brush_color = (0, 0, 0, 255)
+        self._face_draw_eraser = False
+        self._face_draw_mouse_down = False
+        self._face_draw_stroke_points = []
+        self._label_scale = 1.0
+        self._label_offset_x = 0.0
+        self._label_offset_y = 0.0
 
         self.setWindowTitle("FaceDoodle AI - 智能贴纸工坊")
         self.resize(1440, 860)
@@ -63,6 +81,7 @@ class FaceDoodleWindow(QMainWindow):
         self.video_thread = VideoUpdateThread(self.display_queue, self.gallery_queue)
         self.video_thread.change_pixmap_signal.connect(self.update_image)
         self.video_thread.sticker_saved_signal.connect(self._on_sticker_saved)
+        self.video_thread.generation_failed_signal.connect(self._on_generation_failed)
         self.video_thread.start()
 
     def _init_stylesheet(self):
@@ -187,6 +206,11 @@ class FaceDoodleWindow(QMainWindow):
         self.edit_btn.clicked.connect(self._toggle_edit_mode)
         action_layout.addWidget(self.edit_btn)
 
+        self.face_draw_btn = StyledButton("面部绘制", "#e11d48", "#fb7185")
+        self.face_draw_btn.setCheckable(True)
+        self.face_draw_btn.clicked.connect(self._toggle_face_draw_mode)
+        action_layout.addWidget(self.face_draw_btn)
+
         self.reset_btn = StyledButton("重置位置", "#94a3b8", "#b0bec5")
         self.reset_btn.clicked.connect(lambda: self.adjustment_queue.put({"action": "reset"}))
         action_layout.addWidget(self.reset_btn)
@@ -215,8 +239,12 @@ class FaceDoodleWindow(QMainWindow):
 
         root.addWidget(action_row)
 
+        # ── 4.5 面部绘制工具栏 ──
+        self._init_face_draw_toolbar()
+        root.addWidget(self.face_draw_toolbar)
+
         # ── 5. 状态栏 ──
-        self.status_label = QLabel("Ctrl+E 切换编辑 | 左键移动 右键旋转 滚轮缩放 双击重置")
+        self.status_label = QLabel("Ctrl+E 编辑 | Ctrl+D 面部绘制 | 左键移动 右键旋转 滚轮缩放 双击重置")
         self.status_label.setStyleSheet(
             "color: #999; font-size: 12px; padding: 5px; background: #f0f0f5; border: none;"
         )
@@ -226,6 +254,137 @@ class FaceDoodleWindow(QMainWindow):
         # 快捷键
         self.edit_shortcut = QShortcut(QKeySequence("Ctrl+E"), self)
         self.edit_shortcut.activated.connect(self._toggle_edit_mode)
+        self.draw_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        self.draw_shortcut.activated.connect(self._toggle_face_draw_mode)
+
+        # 面部绘制工具快捷键（默认禁用，仅在面部绘制模式下启用）
+        self._draw_tool_shortcuts = []
+        for key, handler in [
+            ("B", lambda: self._on_draw_quick_brush()),
+            ("E", lambda: self._on_draw_quick_eraser()),
+            ("Ctrl+Z", lambda: self._on_draw_undo()),
+            ("[", lambda: self._on_draw_size_delta(-2)),
+            ("]", lambda: self._on_draw_size_delta(2)),
+            ("C", lambda: self._on_draw_clear()),
+            ("S", lambda: self._on_draw_save()),
+        ]:
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(handler)
+            sc.setEnabled(False)
+            self._draw_tool_shortcuts.append(sc)
+
+    def _init_face_draw_toolbar(self):
+        from app.ui.widgets import REGION_OPTIONS, PRESET_COLORS
+
+        self.face_draw_toolbar = QWidget()
+        self.face_draw_toolbar.setVisible(False)
+        self.face_draw_toolbar.setStyleSheet("background: #fafafa; border-top: 1px solid #eee;")
+        tb_layout = QHBoxLayout(self.face_draw_toolbar)
+        tb_layout.setContentsMargins(12, 6, 12, 6)
+        tb_layout.setSpacing(8)
+
+        # Region 选择
+        region_label = QLabel("位置:")
+        region_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        tb_layout.addWidget(region_label)
+
+        self._draw_region_combo = QComboBox()
+        self._draw_region_combo.setStyleSheet(
+            "QComboBox { background: #fff; border: 1px solid #ddd; padding: 4px 8px; font-size: 13px; color: #333; }"
+        )
+        for label, value in REGION_OPTIONS:
+            self._draw_region_combo.addItem(label, value)
+        self._draw_region_combo.currentIndexChanged.connect(self._on_draw_region_changed)
+        tb_layout.addWidget(self._draw_region_combo)
+
+        tb_layout.addSpacing(8)
+
+        # 笔刷大小
+        size_label = QLabel("粗细:")
+        size_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        tb_layout.addWidget(size_label)
+
+        self._draw_brush_slider = QSlider(Qt.Horizontal)
+        self._draw_brush_slider.setRange(1, 50)
+        self._draw_brush_slider.setValue(12)
+        self._draw_brush_slider.setFixedWidth(100)
+        self._draw_brush_slider.setStyleSheet(
+            "QSlider::groove:horizontal { background: #ddd; height: 4px; }"
+            "QSlider::handle:horizontal { background: #e11d48; width: 14px; margin: -5px 0; }"
+        )
+        self._draw_brush_slider.valueChanged.connect(self._on_draw_brush_size_changed)
+        tb_layout.addWidget(self._draw_brush_slider)
+
+        self._brush_size_label = QLabel("12px")
+        self._brush_size_label.setStyleSheet("color: #666; font-size: 12px; background: transparent; border: none; min-width: 32px;")
+        tb_layout.addWidget(self._brush_size_label)
+
+        tb_layout.addSpacing(8)
+
+        # 颜色预设
+        color_label = QLabel("颜色:")
+        color_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        tb_layout.addWidget(color_label)
+
+        for name, bgra in PRESET_COLORS:
+            btn = QPushButton()
+            btn.setFixedSize(22, 22)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(name)
+            r, g, b = bgra[2], bgra[1], bgra[0]
+            btn.setStyleSheet(
+                f"QPushButton {{ background: rgb({r},{g},{b}); border: 1px solid #ccc; }}"
+                f"QPushButton:hover {{ border: 2px solid #333; }}"
+            )
+            btn.clicked.connect(lambda checked, c=bgra: self._on_draw_color_clicked(c))
+            tb_layout.addWidget(btn)
+
+        tb_layout.addSpacing(8)
+
+        # 橡皮擦
+        self._draw_eraser_btn = QPushButton("橡皮")
+        self._draw_eraser_btn.setCheckable(True)
+        self._draw_eraser_btn.setCursor(Qt.PointingHandCursor)
+        self._draw_eraser_btn.setStyleSheet(
+            "QPushButton { background: #fff; color: #666; border: 1px solid #ddd; padding: 4px 10px; font-size: 13px; }"
+            "QPushButton:checked { background: #fef2f2; color: #e11d48; border-color: #e11d48; }"
+        )
+        self._draw_eraser_btn.clicked.connect(self._on_draw_eraser_toggled)
+        tb_layout.addWidget(self._draw_eraser_btn)
+
+        tb_layout.addSpacing(4)
+
+        # 撤销
+        undo_btn = QPushButton("撤销")
+        undo_btn.setCursor(Qt.PointingHandCursor)
+        undo_btn.setStyleSheet(
+            "QPushButton { background: #fff; color: #666; border: 1px solid #ddd; padding: 4px 10px; font-size: 13px; }"
+            "QPushButton:hover { background: #f5f5f5; }"
+        )
+        undo_btn.clicked.connect(self._on_draw_undo)
+        tb_layout.addWidget(undo_btn)
+
+        # 清除
+        clear_btn = QPushButton("清除")
+        clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.setStyleSheet(
+            "QPushButton { background: #fff; color: #666; border: 1px solid #ddd; padding: 4px 10px; font-size: 13px; }"
+            "QPushButton:hover { background: #fef2f2; color: #e11d48; }"
+        )
+        clear_btn.clicked.connect(self._on_draw_clear)
+        tb_layout.addWidget(clear_btn)
+
+        # 保存
+        save_btn = QPushButton("保存")
+        save_btn.setCursor(Qt.PointingHandCursor)
+        save_btn.setStyleSheet(
+            "QPushButton { background: #e11d48; color: white; border: none; padding: 4px 14px; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #fb7185; }"
+        )
+        save_btn.clicked.connect(self._on_draw_save)
+        tb_layout.addWidget(save_btn)
+
+        tb_layout.addStretch()
 
     # ── 画廊管理 ──
 
@@ -234,25 +393,51 @@ class FaceDoodleWindow(QMainWindow):
         self._gallery_items.clear()
         stickers = storage.load_gallery()
         for s in stickers:
-            thumb = storage.get_sticker_thumb(s["id"])
-            card = ThumbnailCard(s["id"], thumb, s.get("prompt", ""), s.get("favorite", False))
+            sid = s["id"]
+            thumb = storage.get_sticker_thumb(sid)
+            card = ThumbnailCard(sid, thumb, s.get("prompt", ""), s.get("favorite", False))
             card.clicked.connect(self._on_gallery_click)
+            card.set_selected(sid == self._current_sticker_id)
+            card.set_active(sid == self._active_sticker_id)
             self.gallery.add_card(card)
-            self._gallery_items[s["id"]] = card
+            self._gallery_items[sid] = card
         self._update_gallery_info()
 
     def _update_gallery_info(self):
         n = len(self._gallery_items)
-        self.sticker_count_label.setText(f"共 {n} 枚贴纸")
+        if n == 0:
+            self.sticker_count_label.setText("还没有贴纸，输入描述来生成第一枚吧")
+            self.gallery.show_placeholder(True)
+        else:
+            self.sticker_count_label.setText(f"共 {n} 枚贴纸")
+            self.gallery.show_placeholder(False)
 
     def _on_gallery_click(self, sticker_id):
-        self._current_sticker_id = sticker_id
-        for sid, card in self._gallery_items.items():
-            card.set_selected(sid == sticker_id)
-        self.gallery_queue.put({"action": "load_sticker", "sticker_id": sticker_id})
+        if self._active_sticker_id == sticker_id:
+            # 再次点击已活跃的贴纸 → 取消使用
+            self._active_sticker_id = None
+            self._current_sticker_id = None
+            for card in self._gallery_items.values():
+                card.set_selected(False)
+                card.set_active(False)
+            self.gallery_queue.put({"action": "load_sticker", "sticker_id": None})
+        else:
+            self._current_sticker_id = sticker_id
+            self._active_sticker_id = sticker_id
+            for sid, card in self._gallery_items.items():
+                card.set_selected(sid == sticker_id)
+                card.set_active(sid == sticker_id)
+            self.gallery_queue.put({"action": "load_sticker", "sticker_id": sticker_id})
 
-    def _on_sticker_saved(self):
+    def _on_sticker_saved(self, sticker_id):
+        self._active_sticker_id = sticker_id
+        self._current_sticker_id = sticker_id
         self._load_gallery()
+        self._reenable_input()
+
+    def _on_generation_failed(self, error_msg):
+        self._reenable_input()
+        QMessageBox.warning(self, "生成失败", f"贴纸生成失败：\n{error_msg}")
 
     def _toggle_favorite(self):
         if not self._current_sticker_id:
@@ -367,6 +552,8 @@ class FaceDoodleWindow(QMainWindow):
         self.edit_btn.setChecked(self._edit_mode)
         self.edit_btn.setText("编辑中" if self._edit_mode else "编辑")
         if self._edit_mode:
+            if self._face_draw_mode:
+                self._toggle_face_draw_mode()
             self.edit_indicator.setVisible(True)
             self._position_indicator()
             self.input_box.setEnabled(False)
@@ -399,23 +586,35 @@ class FaceDoodleWindow(QMainWindow):
     # ── 鼠标事件 ──
 
     def eventFilter(self, obj, event):
-        if obj is self.video_label and self._edit_mode:
-            t = event.type()
-            if t == QEvent.MouseButtonPress:
-                self._on_mouse_press(event)
-                return True
-            elif t == QEvent.MouseMove:
-                self._on_mouse_move(event)
-                return True
-            elif t == QEvent.MouseButtonRelease:
-                self._on_mouse_release(event)
-                return True
-            elif t == QEvent.Wheel:
-                self._on_wheel(event)
-                return True
-            elif t == QEvent.MouseButtonDblClick:
-                self._on_double_click(event)
-                return True
+        if obj is self.video_label:
+            if self._edit_mode:
+                t = event.type()
+                if t == QEvent.MouseButtonPress:
+                    self._on_mouse_press(event)
+                    return True
+                elif t == QEvent.MouseMove:
+                    self._on_mouse_move(event)
+                    return True
+                elif t == QEvent.MouseButtonRelease:
+                    self._on_mouse_release(event)
+                    return True
+                elif t == QEvent.Wheel:
+                    self._on_wheel(event)
+                    return True
+                elif t == QEvent.MouseButtonDblClick:
+                    self._on_double_click(event)
+                    return True
+            elif self._face_draw_mode:
+                t = event.type()
+                if t == QEvent.MouseButtonPress:
+                    self._on_draw_mouse_press(event)
+                    return True
+                elif t == QEvent.MouseMove:
+                    self._on_draw_mouse_move(event)
+                    return True
+                elif t == QEvent.MouseButtonRelease:
+                    self._on_draw_mouse_release(event)
+                    return True
         return super().eventFilter(obj, event)
 
     def _on_mouse_press(self, event):
@@ -448,6 +647,110 @@ class FaceDoodleWindow(QMainWindow):
     def _on_double_click(self, event):
         self.adjustment_queue.put({"action": "reset"})
 
+    # ── 面部绘制模式 ──
+
+    def _toggle_face_draw_mode(self):
+        self._face_draw_mode = not self._face_draw_mode
+        self.draw_queue.put({"action": "toggle_draw_mode"})
+        self.face_draw_btn.setChecked(self._face_draw_mode)
+        self.face_draw_btn.setText("绘制中" if self._face_draw_mode else "面部绘制")
+        for sc in self._draw_tool_shortcuts:
+            sc.setEnabled(self._face_draw_mode)
+        if self._face_draw_mode:
+            if self._edit_mode:
+                self._toggle_edit_mode()
+            self.face_draw_toolbar.setVisible(True)
+            self.edit_btn.setEnabled(False)
+            self.input_box.setEnabled(False)
+            self.send_btn.setEnabled(False)
+            self._face_draw_stroke_points = []
+            self.status_label.setText("B 画笔 E 橡皮 [ ] 粗细 Ctrl+Z 撤销 C 清除 S 保存")
+        else:
+            self.face_draw_toolbar.setVisible(False)
+            self.edit_btn.setEnabled(True)
+            self.input_box.setEnabled(True)
+            self.send_btn.setEnabled(True)
+            self._face_draw_mouse_down = False
+            self.status_label.setText("Ctrl+E 编辑 | Ctrl+D 面部绘制 | 左键移动 右键旋转 滚轮缩放 双击重置")
+
+    def _label_point_to_frame(self, label_pos):
+        if self._frame_size is None:
+            return label_pos.x(), label_pos.y()
+        fx = (label_pos.x() - self._label_offset_x) / self._label_scale
+        fy = (label_pos.y() - self._label_offset_y) / self._label_scale
+        return fx, fy
+
+    def _on_draw_mouse_press(self, event):
+        if event.button() == Qt.LeftButton:
+            self._face_draw_mouse_down = True
+            self._face_draw_stroke_points = []
+            fx, fy = self._label_point_to_frame(event.pos())
+            self._face_draw_stroke_points.append((fx, fy))
+            self.draw_queue.put({"action": "stroke_begin"})
+            self.draw_queue.put({"action": "stroke_point", "point": (fx, fy)})
+
+    def _on_draw_mouse_move(self, event):
+        if not self._face_draw_mouse_down:
+            return
+        fx, fy = self._label_point_to_frame(event.pos())
+        self._face_draw_stroke_points.append((fx, fy))
+        self.draw_queue.put({"action": "stroke_point", "point": (fx, fy)})
+
+    def _on_draw_mouse_release(self, event):
+        if event.button() == Qt.LeftButton:
+            self._face_draw_mouse_down = False
+            self._face_draw_stroke_points = []
+            self.draw_queue.put({"action": "stroke_end"})
+
+    def _on_draw_region_changed(self, idx):
+        region = self._draw_region_combo.currentData()
+        self._face_draw_region = region
+        self.draw_queue.put({"action": "set_region", "region": region})
+
+    def _on_draw_brush_size_changed(self, value):
+        self._face_draw_brush_size = value
+        self._brush_size_label.setText(f"{value}px")
+        self.draw_queue.put({"action": "set_brush", "brush_size": value,
+                             "brush_color": self._face_draw_brush_color})
+
+    def _on_draw_color_clicked(self, bgra):
+        self._face_draw_brush_color = bgra
+        self._face_draw_eraser = False
+        self._draw_eraser_btn.setChecked(False)
+        self.draw_queue.put({"action": "set_brush", "brush_color": bgra,
+                             "brush_size": self._face_draw_brush_size})
+
+    def _on_draw_eraser_toggled(self, checked):
+        self._face_draw_eraser = checked
+        self.draw_queue.put({"action": "toggle_eraser", "eraser_mode": checked})
+
+    def _on_draw_undo(self):
+        self.draw_queue.put({"action": "undo"})
+
+    def _on_draw_clear(self):
+        self.draw_queue.put({"action": "clear"})
+
+    def _on_draw_save(self):
+        self.draw_queue.put({"action": "save"})
+
+    def _on_draw_quick_brush(self):
+        self._face_draw_eraser = False
+        self._draw_eraser_btn.setChecked(False)
+        self.draw_queue.put({"action": "toggle_eraser", "eraser_mode": False})
+
+    def _on_draw_quick_eraser(self):
+        self._face_draw_eraser = True
+        self._draw_eraser_btn.setChecked(True)
+        self.draw_queue.put({"action": "toggle_eraser", "eraser_mode": True})
+
+    def _on_draw_size_delta(self, delta):
+        new_size = max(1, min(50, self._face_draw_brush_size + delta))
+        self._face_draw_brush_size = new_size
+        self._draw_brush_slider.setValue(new_size)
+        self._brush_size_label.setText(f"{new_size}px")
+        self.draw_queue.put({"action": "set_brush", "brush_size": new_size,
+                             "brush_color": self._face_draw_brush_color})
+
     # ── 命令发送 ──
 
     def send_command(self):
@@ -460,7 +763,6 @@ class FaceDoodleWindow(QMainWindow):
         self.input_box.setPlaceholderText("AI 正在生成中，请稍候...")
         self.input_box.setEnabled(False)
         self.send_btn.setEnabled(False)
-        QTimer.singleShot(5000, self._reenable_input)
 
     def _reenable_input(self):
         if not self._edit_mode:
@@ -476,9 +778,12 @@ class FaceDoodleWindow(QMainWindow):
         rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         qimg = QImage(rgb_img.data, w, h, ch * w, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
-        self.video_label.setPixmap(
-            pixmap.scaled(self.video_label.width(), self.video_label.height(),
-                          Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        scaled = pixmap.scaled(self.video_label.width(), self.video_label.height(),
+                               Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._label_scale = scaled.width() / max(w, 1)
+        self._label_offset_x = (self.video_label.width() - scaled.width()) / 2.0
+        self._label_offset_y = (self.video_label.height() - scaled.height()) / 2.0
+        self.video_label.setPixmap(scaled)
 
     def closeEvent(self, event):
         from app.utils.storage import save_preferences

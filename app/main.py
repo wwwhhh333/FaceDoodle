@@ -24,6 +24,7 @@ def main():
     command_queue = Queue(maxsize=queue_cfg.get("command_maxsize", 5))
     adjustment_queue = Queue(maxsize=20)
     gallery_queue = Queue(maxsize=10)
+    draw_queue = Queue(maxsize=50)
     stop_event = Event()
 
     print(f"[System] 正在启动视频流与 AI 消费者进程... {'(Mock 模式: 跳过 ComfyUI)' if MOCK_MODE else ''}")
@@ -35,6 +36,7 @@ def main():
         command_queue,
         adjustment_queue,
         gallery_queue,
+        draw_queue,
         API_KEY,
         stop_event,
         MOCK_MODE,
@@ -45,7 +47,7 @@ def main():
 
     print("[System] 正在启动图形界面...")
     app = QApplication(sys.argv)
-    window = FaceDoodleWindow(display_queue, command_queue, adjustment_queue, gallery_queue)
+    window = FaceDoodleWindow(display_queue, command_queue, adjustment_queue, gallery_queue, draw_queue)
 
     w = prefs.get("window_width", 1280)
     h = prefs.get("window_height", 800)

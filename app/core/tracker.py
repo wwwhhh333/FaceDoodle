@@ -9,7 +9,9 @@ from multiprocessing import Queue, Process, Event
 from app.ai.agent import FaceDoodleAgent
 from app.ai.generator import ComfyClient
 from app.core.face_mesh import FaceDetector
-from app.core.renderer import render_scene
+from app.core.renderer import (render_scene, render_loading_progress, render_face_mesh,
+                                apply_head_pose_skew, _build_location_quad)
+from app.core.face_draw import FaceDrawCanvas
 from app.utils.image_proc import load_rgba_sticker
 from app.utils import storage
 
@@ -82,10 +84,11 @@ def _handle_img2img(cmd, result_queue, mock):
             result_queue.put(result_data)
             print(f"[AI Worker] img2img 任务完成, 位置: {target_location}")
         else:
-            print("[AI Worker] img2img 错误：无法将生成结果转换为 RGBA 格式")
+            result_queue.put({"error": "ComfyUI 未能生成有效图片，请检查服务是否正常运行"})
 
     except Exception as e:
         print(f"[AI Worker] img2img 异常: {str(e)}")
+        result_queue.put({"error": str(e)})
     finally:
         ai_state["is_generating"] = False
 
@@ -139,10 +142,11 @@ def ai_worker_thread(user_command, result_queue, api_key, mock=False):
             result_queue.put(result_data)
             print(f"[AI Worker] 任务完成，位置: {task_info['target_location']}")
         else:
-            print("[AI Worker] 错误：无法将生成结果转换为 RGBA 格式")
+            result_queue.put({"error": "ComfyUI 未能生成有效图片，请检查服务是否正常运行"})
 
     except Exception as e:
         print(f"[AI Worker] 发生异常: {str(e)}")
+        result_queue.put({"error": str(e)})
 
     finally:
         ai_state["is_generating"] = False
@@ -178,11 +182,10 @@ def producer(frame_queue, stop_event):
     print("[Producer] 已退出")
 
 
-def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_queue, api_key, stop_event, mock=False):
+def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_queue, draw_queue, api_key, stop_event, mock=False):
     detector = FaceDetector()
     result_queue = queue.Queue()
 
-    loading_sticker = load_rgba_sticker("assets/static/loading.png")
     active_content = None
     pending_command = None
 
@@ -194,6 +197,10 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
         "edit_mode": False,
     }
     _sticker_adjustments = {}  # sticker_id -> adjustment dict
+
+    face_canvas = FaceDrawCanvas()
+    face_draw_active = False
+    face_draw_region = "full_face"
 
     if mock:
         temp_files = glob.glob("assets/temp/*.png")
@@ -216,6 +223,7 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
 
             if pending_command and not ai_state["is_generating"]:
                 ai_state["is_generating"] = True
+                ai_state["generation_start_time"] = time.time()
                 cmd = pending_command
                 pending_command = None
                 threading.Thread(
@@ -226,25 +234,29 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
 
             try:
                 new_content = result_queue.get(block=False)
-                old_sid = active_content.get("sticker_id") if active_content else None
-                if old_sid:
-                    _sticker_adjustments[old_sid] = dict(adjustment)
-                active_content = new_content
-                adjustment["offset_x"] = 0.0
-                adjustment["offset_y"] = 0.0
-                adjustment["rotation"] = 0.0
-                adjustment["scale_mult"] = 1.0
-                # 自动保存到画廊并通知 UI
-                try:
-                    sticker_id = storage.save_sticker(
-                        new_content['sticker'],
-                        {"prompt": new_content.get("prompt", ""),
-                         "location": new_content.get("location", "forehead"),
-                         "scale": new_content.get("scale", 1.0)}
-                    )
-                    display_queue.put({"action": "sticker_saved", "sticker_id": sticker_id})
-                except Exception:
-                    pass
+                if "error" in new_content:
+                    display_queue.put({"action": "generation_failed", "error": new_content["error"]})
+                else:
+                    old_sid = active_content.get("sticker_id") if active_content else None
+                    if old_sid:
+                        saved = dict(adjustment)
+                        _sticker_adjustments[old_sid] = saved
+                        storage.save_sticker_adjustments(old_sid, saved)
+                    active_content = new_content
+                    adjustment["offset_x"] = 0.0
+                    adjustment["offset_y"] = 0.0
+                    adjustment["rotation"] = 0.0
+                    adjustment["scale_mult"] = 1.0
+                    try:
+                        sticker_id = storage.save_sticker(
+                            new_content['sticker'],
+                            {"prompt": new_content.get("prompt", ""),
+                             "location": new_content.get("location", "forehead"),
+                             "scale": new_content.get("scale", 1.0)}
+                        )
+                        display_queue.put({"action": "sticker_saved", "sticker_id": sticker_id})
+                    except Exception:
+                        pass
             except queue.Empty:
                 pass
 
@@ -286,7 +298,9 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                     # 保存当前贴纸的调整状态
                     old_sid = active_content.get("sticker_id") if active_content else None
                     if old_sid:
-                        _sticker_adjustments[old_sid] = dict(adjustment)
+                        saved = dict(adjustment)
+                        _sticker_adjustments[old_sid] = saved
+                        storage.save_sticker_adjustments(old_sid, saved)
                     if sid:
                         loaded, meta = storage.get_sticker(sid)
                         if loaded is not None and meta is not None:
@@ -297,13 +311,14 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                                 "sticker_id": sid,
                                 "prompt": meta.get("prompt", ""),
                             }
-                            # 恢复该贴纸的历史调整，否则重置
-                            if sid in _sticker_adjustments:
-                                saved = _sticker_adjustments[sid]
+                            # 恢复该贴纸的历史调整：优先内存，其次磁盘，否则重置
+                            saved = _sticker_adjustments.get(sid) or storage.get_sticker_adjustments(sid)
+                            if saved:
                                 adjustment["offset_x"] = saved.get("offset_x", 0.0)
                                 adjustment["offset_y"] = saved.get("offset_y", 0.0)
                                 adjustment["rotation"] = saved.get("rotation", 0.0)
                                 adjustment["scale_mult"] = saved.get("scale_mult", 1.0)
+                                _sticker_adjustments[sid] = saved
                             else:
                                 adjustment["offset_x"] = 0.0
                                 adjustment["offset_y"] = 0.0
@@ -316,13 +331,68 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                         adjustment["rotation"] = 0.0
                         adjustment["scale_mult"] = 1.0
 
+            # 处理面部绘制指令
+            while not draw_queue.empty():
+                try:
+                    msg = draw_queue.get(block=False)
+                except Exception:
+                    break
+                action = msg.get("action")
+                if action == "toggle_draw_mode":
+                    face_draw_active = not face_draw_active
+                    if face_draw_active:
+                        adjustment["edit_mode"] = False
+                elif action == "set_region":
+                    face_draw_region = msg.get("region", "forehead_full")
+                elif action == "set_brush":
+                    face_canvas.set_brush_size(msg.get("brush_size", 12))
+                    face_canvas.set_brush_color(msg.get("brush_color", (0, 0, 0, 255)))
+                elif action == "toggle_eraser":
+                    face_canvas.set_eraser_mode(msg.get("eraser_mode", True))
+                elif action == "undo":
+                    face_canvas.undo()
+                elif action == "clear":
+                    face_canvas.clear()
+                elif action == "stroke_begin" and face_draw_active and face_data:
+                    quad = _build_location_quad(face_data, face_draw_region, (512, 512, 4), scale=1.5)
+                    if quad is not None:
+                        quad = apply_head_pose_skew(quad, face_data)
+                        face_canvas.begin_stroke(quad)
+
+                elif action == "stroke_point" and face_draw_active:
+                    pt = msg.get("point")
+                    if pt is not None:
+                        face_canvas.add_stroke_point(pt)
+
+                elif action == "stroke_end":
+                    face_canvas.end_stroke()
+                elif action == "save":
+                    result = face_canvas.get_result()
+                    if result is not None:
+                        sid = storage.save_sticker(result, {
+                            "prompt": "全脸手绘",
+                            "location": face_draw_region,
+                            "scale": 1.0,
+                        })
+                        display_queue.put({"action": "sticker_saved", "sticker_id": sid})
+
             if face_data:
-                if ai_state["is_generating"] and loading_sticker is not None:
-                    frame = render_scene(frame, face_data,
-                                         {'sticker': loading_sticker, 'location': 'forehead', 'scale': 1.0},
-                                         adjustment)
-                elif active_content is not None:
+                if ai_state["is_generating"]:
+                    frame = render_loading_progress(frame, face_data, ai_state)
+
+                if ai_state["is_generating"] or adjustment.get("edit_mode") or face_draw_active:
+                    frame = render_face_mesh(frame, face_data)
+
+                if active_content is not None:
                     frame = render_scene(frame, face_data, active_content, adjustment)
+
+                if face_draw_active and face_canvas.has_content:
+                    draw_content = {
+                        "sticker": face_canvas.canvas,
+                        "location": face_draw_region,
+                        "scale": 1.5,
+                    }
+                    frame = render_scene(frame, face_data, draw_content, None)
 
             try:
                 display_queue.put(frame, timeout=0.05)

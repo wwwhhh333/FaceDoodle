@@ -1,5 +1,8 @@
 # 区域透视贴合与贴纸 Alpha 融合渲染
 
+import math
+import time
+
 import cv2
 import numpy as np
 
@@ -147,6 +150,8 @@ def _build_location_quad(face_landmarks, location, sticker_shape, scale=1.0):
     # location 直接就是关键点组名，支持旧的映射做兼容
     region = {
         "forehead": "forehead_full",
+        "全脸": "full_face",
+        "full_face": "full_face",
         "头顶": "head_top",
         "head_top": "head_top",
         "eyes": "eyes",
@@ -283,3 +288,88 @@ def render_scene(frame, face_landmarks, active_content, adjustment=None):
         cv2.drawMarker(frame, (cx, cy), (0, 255, 0), cv2.MARKER_CROSS, 12, 2)
 
     return frame
+
+
+def _hsv_to_bgr(h, s=0.8, v=0.9):
+    hsv = np.uint8([[[int(h * 179) % 180, int(s * 255), int(v * 255)]]])
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    return (int(bgr[0, 0, 0]), int(bgr[0, 0, 1]), int(bgr[0, 0, 2]))
+
+
+def render_loading_progress(frame, face_data, ai_state):
+    if not ai_state.get("is_generating"):
+        return frame
+    if not face_data or "face_width" not in face_data:
+        return frame
+
+    t = time.time()
+    elapsed = t - ai_state.get("generation_start_time", t)
+
+    left_cheek = face_data.get("left_cheek")
+    right_cheek = face_data.get("right_cheek")
+    nose_bridge = face_data.get("nose_bridge")
+    if not left_cheek or not right_cheek or not nose_bridge:
+        return frame
+
+    cx = int((left_cheek[0] + right_cheek[0]) / 2)
+    cy = int(nose_bridge[1])
+    radius = int(face_data["face_width"] * 0.55)
+    if radius < 10:
+        return frame
+
+    hue = (t * 0.25) % 1.0
+    color = _hsv_to_bgr(hue)
+
+    pulse = 0.6 + 0.4 * math.sin(t * math.pi)
+    alpha = pulse * 0.7
+
+    start_angle = (t * 90) % 360
+    end_angle = start_angle + 300
+
+    overlay = frame.copy()
+    cv2.ellipse(overlay, (cx, cy), (radius, radius), 0,
+                start_angle, end_angle, color, thickness=3, lineType=cv2.LINE_AA)
+    frame = cv2.addWeighted(frame, 1.0 - alpha, overlay, alpha, 0)
+
+    end_rad = math.radians(end_angle)
+    dot_x = cx + radius * math.cos(end_rad)
+    dot_y = cy - radius * math.sin(end_rad)
+    cv2.circle(frame, (int(dot_x), int(dot_y)), 6, (255, 255, 255), -1, cv2.LINE_AA)
+    cv2.circle(frame, (int(dot_x), int(dot_y)), 9, color, 2, cv2.LINE_AA)
+
+    text = f"{int(elapsed)}s"
+    text_y = cy + radius + 28
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+    tx = cx - tw // 2
+    cv2.putText(frame, text, (tx, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+
+    return frame
+
+
+def render_face_mesh(frame, face_data):
+    if "all_landmarks" not in face_data or "mesh_connections" not in face_data:
+        return frame
+
+    t = time.time()
+    pts = face_data["all_landmarks"]
+    connections = face_data["mesh_connections"]
+
+    hue = (t * 0.25) % 1.0
+    color = _hsv_to_bgr(hue, s=0.6, v=1.0)
+
+    alpha = 0.25 + 0.15 * (math.sin(t * math.pi) * 0.5 + 0.5)
+
+    overlay = frame.copy()
+    for a, b in connections:
+        if a < len(pts) and b < len(pts):
+            pt1 = (int(pts[a][0]), int(pts[a][1]))
+            pt2 = (int(pts[b][0]), int(pts[b][1]))
+            cv2.line(overlay, pt1, pt2, color, 1, cv2.LINE_AA)
+
+    frame = cv2.addWeighted(frame, 1.0 - alpha, overlay, alpha, 0)
+    return frame
+
+
+def apply_head_pose_skew(quad, face_landmarks):
+    return _apply_head_pose_skew(quad, face_landmarks)

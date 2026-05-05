@@ -146,6 +146,32 @@ def load_preferences():
     return get_config().get("preferences", {})
 
 
+def save_sticker_adjustments(sticker_id, adjustment):
+    with _index_lock:
+        index = _load_index()
+        for s in index["stickers"]:
+            if s["id"] == sticker_id:
+                s["offset_x"] = adjustment.get("offset_x", 0.0)
+                s["offset_y"] = adjustment.get("offset_y", 0.0)
+                s["rotation"] = adjustment.get("rotation", 0.0)
+                s["scale_mult"] = adjustment.get("scale_mult", 1.0)
+                break
+        _save_index(index)
+
+
+def get_sticker_adjustments(sticker_id):
+    index = _load_index()
+    for s in index["stickers"]:
+        if s["id"] == sticker_id:
+            return {
+                "offset_x": s.get("offset_x", 0.0),
+                "offset_y": s.get("offset_y", 0.0),
+                "rotation": s.get("rotation", 0.0),
+                "scale_mult": s.get("scale_mult", 1.0),
+            }
+    return None
+
+
 def add_recent_prompt(prompt_text):
     prefs = load_preferences()
     recent = prefs.get("recent_prompts", [])
