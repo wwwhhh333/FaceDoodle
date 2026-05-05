@@ -10,6 +10,7 @@ from app.ai.generator import ComfyClient
 from app.core.face_mesh import FaceDetector
 from app.core.renderer import render_scene
 from app.utils.image_proc import load_rgba_sticker
+from app.utils import storage
 
 ai_state = {
     "is_generating": False,
@@ -56,6 +57,8 @@ def ai_worker_thread(user_command, result_queue, api_key, mock=False):
                 "sticker": new_sticker,
                 "location": task_info["target_location"],
                 "scale": task_info.get("scale", 1.0),
+                "prompt": user_command,
+                "positive_prompt": task_info.get("positive_prompt", ""),
                 "timestamp": time.time()
             }
             result_queue.put(result_data)
@@ -100,7 +103,7 @@ def producer(frame_queue, stop_event):
     print("[Producer] 已退出")
 
 
-def consumer(in_queue, display_queue, command_queue, adjustment_queue, api_key, stop_event, mock=False):
+def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_queue, api_key, stop_event, mock=False):
     detector = FaceDetector()
     result_queue = queue.Queue()
 
@@ -115,6 +118,7 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, api_key, 
         "scale_mult": 1.0,
         "edit_mode": False,
     }
+    _sticker_adjustments = {}  # sticker_id -> adjustment dict
 
     if mock:
         temp_files = glob.glob("assets/temp/*.png")
@@ -147,7 +151,25 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, api_key, 
 
             try:
                 new_content = result_queue.get(block=False)
+                old_sid = active_content.get("sticker_id") if active_content else None
+                if old_sid:
+                    _sticker_adjustments[old_sid] = dict(adjustment)
                 active_content = new_content
+                adjustment["offset_x"] = 0.0
+                adjustment["offset_y"] = 0.0
+                adjustment["rotation"] = 0.0
+                adjustment["scale_mult"] = 1.0
+                # 自动保存到画廊并通知 UI
+                try:
+                    sticker_id = storage.save_sticker(
+                        new_content['sticker'],
+                        {"prompt": new_content.get("prompt", ""),
+                         "location": new_content.get("location", "forehead"),
+                         "scale": new_content.get("scale", 1.0)}
+                    )
+                    display_queue.put({"action": "sticker_saved", "sticker_id": sticker_id})
+                except Exception:
+                    pass
             except queue.Empty:
                 pass
 
@@ -177,6 +199,47 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, api_key, 
                     adjustment["offset_y"] = 0.0
                     adjustment["rotation"] = 0.0
                     adjustment["scale_mult"] = 1.0
+
+            # 处理画廊指令（加载已有贴纸）
+            while not gallery_queue.empty():
+                try:
+                    gmsg = gallery_queue.get(block=False)
+                except Exception:
+                    break
+                if gmsg.get("action") == "load_sticker":
+                    sid = gmsg.get("sticker_id")
+                    # 保存当前贴纸的调整状态
+                    old_sid = active_content.get("sticker_id") if active_content else None
+                    if old_sid:
+                        _sticker_adjustments[old_sid] = dict(adjustment)
+                    if sid:
+                        loaded, meta = storage.get_sticker(sid)
+                        if loaded is not None and meta is not None:
+                            active_content = {
+                                "sticker": loaded,
+                                "location": meta.get("region", "forehead_top"),
+                                "scale": meta.get("scale", 1.0),
+                                "sticker_id": sid,
+                                "prompt": meta.get("prompt", ""),
+                            }
+                            # 恢复该贴纸的历史调整，否则重置
+                            if sid in _sticker_adjustments:
+                                saved = _sticker_adjustments[sid]
+                                adjustment["offset_x"] = saved.get("offset_x", 0.0)
+                                adjustment["offset_y"] = saved.get("offset_y", 0.0)
+                                adjustment["rotation"] = saved.get("rotation", 0.0)
+                                adjustment["scale_mult"] = saved.get("scale_mult", 1.0)
+                            else:
+                                adjustment["offset_x"] = 0.0
+                                adjustment["offset_y"] = 0.0
+                                adjustment["rotation"] = 0.0
+                                adjustment["scale_mult"] = 1.0
+                    else:
+                        active_content = None
+                        adjustment["offset_x"] = 0.0
+                        adjustment["offset_y"] = 0.0
+                        adjustment["rotation"] = 0.0
+                        adjustment["scale_mult"] = 1.0
 
             if face_data:
                 if ai_state["is_generating"] and loading_sticker is not None:

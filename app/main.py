@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import QApplication
 from app.core.tracker import producer, consumer
 from app.ui.main_window import FaceDoodleWindow
 from app.utils.config_loader import load_config
+from app.utils.storage import load_preferences
 
 API_KEY = os.getenv("DEEPSEEK_API_KEY") or os.getenv("MODELSCOPE_API_KEY")
 MOCK_MODE = "--mock" in sys.argv
@@ -16,11 +17,13 @@ MOCK_MODE = "--mock" in sys.argv
 def main():
     config = load_config()
     queue_cfg = config.get("queue", {})
+    prefs = load_preferences()
 
     frame_queue = Queue(maxsize=queue_cfg.get("frame_maxsize", 5))
     display_queue = Queue(maxsize=queue_cfg.get("display_maxsize", 5))
     command_queue = Queue(maxsize=queue_cfg.get("command_maxsize", 5))
     adjustment_queue = Queue(maxsize=20)
+    gallery_queue = Queue(maxsize=10)
     stop_event = Event()
 
     print(f"[System] 正在启动视频流与 AI 消费者进程... {'(Mock 模式: 跳过 ComfyUI)' if MOCK_MODE else ''}")
@@ -31,6 +34,7 @@ def main():
         display_queue,
         command_queue,
         adjustment_queue,
+        gallery_queue,
         API_KEY,
         stop_event,
         MOCK_MODE,
@@ -41,7 +45,11 @@ def main():
 
     print("[System] 正在启动图形界面...")
     app = QApplication(sys.argv)
-    window = FaceDoodleWindow(display_queue, command_queue, adjustment_queue)
+    window = FaceDoodleWindow(display_queue, command_queue, adjustment_queue, gallery_queue)
+
+    w = prefs.get("window_width", 1280)
+    h = prefs.get("window_height", 800)
+    window.resize(w, h)
     window.show()
 
     exit_code = app.exec_()

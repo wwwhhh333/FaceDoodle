@@ -107,6 +107,7 @@ class FaceDetector:
         LANDMARK_GROUPS = {
             "forehead_full": ([8, 9, 10, 67, 68, 69, 103, 104, 108, 109, 151, 299, 300, 301, 333, 334, 337, 338], 0.0),
             "forehead_top": ([8, 9, 10, 67, 68, 69, 108, 109, 151, 337, 338, 299, 300, 301], 0.1),
+            "head_top": ([8, 9, 10, 108, 109, 151, 337, 338], 0.0),
             "brows": ([70, 105, 107, 336, 334, 300], 0.2),
             "eyes": ([33, 133, 159, 145, 362, 263, 386, 374, 70, 300], 0.3),
             "nose": ([1, 2, 4, 5, 6, 19, 98, 168, 195, 197, 327], 0.25),
@@ -126,6 +127,11 @@ class FaceDetector:
             if key in rects:
                 x, y, w, h = rects[key]
                 rects[key] = (x, y - h * 0.5, w, h * 1.5)
+
+        # head_top 用于头顶饰品 (猫耳/帽子/皇冠)，位置更高
+        if "head_top" in rects:
+            x, y, w, h = rects["head_top"]
+            rects["head_top"] = (x, y - h * 1.2, w, h * 1.6)
 
         result = {
             "forehead": tuple(forehead),

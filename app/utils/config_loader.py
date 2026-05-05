@@ -28,6 +28,17 @@ DEFAULT_CONFIG = {
     },
     "generation": {
         "negative_prompt": "photo, realistic, 3D render, shadow, complex background, blur, noisy edges, text, watermark, signature, low quality, jpeg artifacts"
+    },
+    "preferences": {
+        "default_region": "forehead_top",
+        "default_scale": 1.0,
+        "recent_prompts": [],
+        "window_width": 1280,
+        "window_height": 800
+    },
+    "external_editor": {
+        "path": "D:/software/sai2/sai2.exe",
+        "args": ""
     }
 }
 

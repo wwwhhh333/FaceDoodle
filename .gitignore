@@ -5,4 +5,5 @@ __pycache__/
 assets/temp/*.png
 assets/temp/*.jpg
 assets/temp/*.webp
+assets/gallery/
 config.json

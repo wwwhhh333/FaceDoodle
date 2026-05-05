@@ -9,12 +9,13 @@ from openai import OpenAI
 
 # 位置映射表：将 AI 返回的关键词映射到 Renderer 能识别的面部区域
 REGION_GROUPS = {
-    "forehead_top", "forehead_full", "brows", "eyes",
+    "head_top", "forehead_top", "forehead_full", "brows", "eyes",
     "nose", "mouth", "cheek_left", "cheek_right", "chin", "jaw"
 }
 
 REGION_ALIASES = {
     "forehead": "forehead_top",
+    "头顶": "head_top",
     "cheek": "cheek_left",
     "right_cheek": "cheek_right",
     "左脸颊": "cheek_left",
@@ -39,7 +40,8 @@ def _estimate_scale(region, keyword):
 
 
 KEYWORD_REGION_MAP = {
-    "forehead_top": ["猫耳", "兔耳", "耳朵", "帽子", "皇冠", "光环", "触角", "王冠", "犄角"],
+    "head_top": ["猫耳", "兔耳", "耳朵", "帽子", "皇冠", "光环", "王冠", "犄角"],
+    "forehead_top": ["触角", "发箍", "头箍"],
     "forehead_full": ["发饰", "头饰", "发带", "蝴蝶结", "头巾", "角"],
     "eyes": ["眼镜", "墨镜", "眼罩", "眼影", "眼线", "睫毛", "护目镜", "太阳镜", "美瞳", "眼"],
     "brows": ["眉毛"],
@@ -76,7 +78,7 @@ class FaceDoodleAgent:
 1. 只能输出 JSON，不要输出解释。
 2. prompt 用英文描述贴纸内容，必须包含"正面平铺、无透视、像一枚徽章或图标"，加上材质、颜色，不超过20词。例如： "glasses front view, flat lay, icon style, black thick frame, symmetric" 而不是 "a pair of glasses"。
 3. region 从以下人脸关键点组中选择最合适的：
-   forehead_top(发际线,猫耳/帽子), forehead_full(整个额头,头巾/绷带), brows(眉毛),
+   head_top(头顶,猫耳/帽子/皇冠/兔耳), forehead_top(发际线,触角/发箍), forehead_full(整个额头,头巾/绷带), brows(眉毛),
    eyes(眼睛,眼镜/眼罩), nose(鼻子,鼻环/红鼻头), mouth(嘴部,口罩/胡子/嘴唇),
    cheek_left(左脸颊,腮红/伤疤), cheek_right(右脸颊), chin(下巴), jaw(下颌线)
 4. scale 是贴纸缩放系数，0.3到2.0，默认1.0。根据贴纸类型判断：大型饰品(帽子/猫耳/翅膀)=1.3~1.8，中型(眼镜/口罩)=0.9~1.2，小型(鼻环/雀斑/星星)=0.3~0.7。

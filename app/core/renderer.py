@@ -147,6 +147,8 @@ def _build_location_quad(face_landmarks, location, sticker_shape, scale=1.0):
     # location 直接就是关键点组名，支持旧的映射做兼容
     region = {
         "forehead": "forehead_full",
+        "头顶": "head_top",
+        "head_top": "head_top",
         "eyes": "eyes",
         "nose": "nose",
         "mouth": "mouth",
