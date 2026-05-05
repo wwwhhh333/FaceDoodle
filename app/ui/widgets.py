@@ -1,8 +1,8 @@
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QScrollArea,
                              QHBoxLayout, QVBoxLayout, QSlider, QColorDialog,
                              QComboBox, QDialog, QGridLayout)
-from PyQt5.QtGui import (QPixmap, QImage, QPainter, QColor, QLinearGradient,
-                         QPen, QBrush, QMouseEvent)
+from PyQt5.QtGui import (QPixmap, QImage, QPainter, QColor,
+                         QPen, QMouseEvent)
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QPoint, QTimer
 import numpy as np
 import cv2
@@ -32,40 +32,40 @@ class ThumbnailCard(QWidget):
         self.sticker_id = sticker_id
         self._selected = False
         self._fav = is_favorite
-        self.setFixedSize(120, 140)
+        self.setFixedSize(100, 120)
         self.setCursor(Qt.PointingHandCursor)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(2)
 
         self.thumb_label = QLabel()
-        self.thumb_label.setFixedSize(112, 112)
+        self.thumb_label.setFixedSize(96, 96)
         self.thumb_label.setAlignment(Qt.AlignCenter)
         self.thumb_label.setStyleSheet(
-            "background: #f0f0f5; border-radius: 10px; border: 2px solid #ddd;"
+            "background: #f0f0f5; border: 2px solid #ddd;"
         )
         if thumb_bgra is not None:
             pix = _bgra_to_qpixmap(thumb_bgra)
             if pix is not None:
                 self.thumb_label.setPixmap(
-                    pix.scaled(108, 108, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    pix.scaled(92, 92, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 )
         layout.addWidget(self.thumb_label, alignment=Qt.AlignCenter)
 
-        label_text = prompt[:12] + ".." if len(prompt) > 12 else prompt
+        label_text = prompt[:10] + ".." if len(prompt) > 10 else prompt
         self.name_label = QLabel(label_text)
         self.name_label.setAlignment(Qt.AlignCenter)
         self.name_label.setStyleSheet(
-            "color: #666; font-size: 10px; background: transparent; border: none;"
+            "color: #666; font-size: 11px; background: transparent; border: none;"
         )
         layout.addWidget(self.name_label)
 
     def set_selected(self, sel):
         self._selected = sel
-        color = "#ff6ec7" if sel else "#ddd"
+        color = "#333" if sel else "#ddd"
         self.thumb_label.setStyleSheet(
-            f"background: #f0f0f5; border-radius: 10px; border: 2px solid {color};"
+            f"background: #f0f0f5; border: 2px solid {color};"
         )
 
     def mousePressEvent(self, event):
@@ -84,9 +84,8 @@ class StyledButton(QPushButton):
                 background: {color};
                 color: {text_color};
                 border: none;
-                border-radius: 10px;
-                padding: 8px 16px;
-                font-size: 14px;
+                padding: 10px 20px;
+                font-size: 15px;
                 font-weight: bold;
             }}
             QPushButton:hover {{
@@ -105,13 +104,14 @@ class StyledButton(QPushButton):
 class GradientBar(QWidget):
     def __init__(self, title, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(48)
+        self.setFixedHeight(56)
+        self.setStyleSheet("background: #2c2c2c;")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 0, 16, 0)
+        layout.setContentsMargins(20, 0, 16, 0)
 
         self.title_label = QLabel(title)
         self.title_label.setStyleSheet(
-            "color: white; font-size: 18px; font-weight: bold; background: transparent; border: none;"
+            "color: white; font-size: 20px; font-weight: bold; background: transparent; border: none;"
         )
         layout.addWidget(self.title_label)
 
@@ -124,38 +124,30 @@ class GradientBar(QWidget):
         if layout:
             layout.addWidget(widget)
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        grad = QLinearGradient(0, 0, self.width(), 0)
-        grad.setColorAt(0.0, QColor("#667eea"))
-        grad.setColorAt(0.5, QColor("#a78bfa"))
-        grad.setColorAt(1.0, QColor("#f472b6"))
-        painter.fillRect(self.rect(), grad)
-
 
 class GalleryScrollArea(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(150)
+        self.setFixedWidth(210)
         self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setStyleSheet("""
-            QScrollArea { background: #fff; border: none; }
-            QScrollBar:horizontal {
-                background: #f5f5f5; height: 8px;
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical {
+                background: #f5f5f5; width: 8px;
             }
-            QScrollBar::handle:horizontal {
-                background: #ccc; border-radius: 4px; min-width: 30px;
+            QScrollBar::handle:vertical {
+                background: #ccc; min-height: 30px;
             }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
 
         self.container = QWidget()
         self.container.setStyleSheet("background: transparent;")
-        self.layout = QHBoxLayout(self.container)
+        self.layout = QVBoxLayout(self.container)
         self.layout.setContentsMargins(8, 4, 8, 4)
-        self.layout.setSpacing(8)
+        self.layout.setSpacing(6)
         self.layout.addStretch()
         self.setWidget(self.container)
 
@@ -349,34 +341,34 @@ class DrawingDialog(QDialog):
         super().__init__(parent)
         self.gallery_queue = gallery_queue
         self.setWindowTitle("🎨 绘制贴纸")
-        self.setFixedSize(640, 700)
+        self.setFixedSize(660, 730)
         self.setStyleSheet("""
             QDialog { background: #f5f5f8; }
-            QLabel { color: #444; font-size: 13px; }
+            QLabel { color: #444; font-size: 14px; }
             QSlider::groove:horizontal {
-                background: #ddd; height: 6px; border-radius: 3px;
+                background: #ddd; height: 6px;
             }
             QSlider::handle:horizontal {
                 background: #667eea; width: 16px; height: 16px;
-                margin: -5px 0; border-radius: 8px;
+                margin: -5px 0;
             }
             QComboBox {
                 background: #fff; color: #333; border: 2px solid #ddd;
-                border-radius: 8px; padding: 6px 12px; font-size: 13px;
+                padding: 6px 12px; font-size: 14px;
             }
             QComboBox::drop-down { border: none; }
         """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(12)
 
         # 画布
         self.canvas = DrawingCanvas()
         if initial_sticker is not None:
             self.canvas.load_image(initial_sticker)
         canvas_container = QWidget()
-        canvas_container.setStyleSheet("background: #fff; border-radius: 12px; padding: 8px;")
+        canvas_container.setStyleSheet("background: #fff; padding: 8px;")
         canvas_layout = QVBoxLayout(canvas_container)
         canvas_layout.addWidget(self.canvas, alignment=Qt.AlignCenter)
         layout.addWidget(canvas_container, alignment=Qt.AlignCenter)
@@ -407,8 +399,7 @@ class DrawingDialog(QDialog):
             btn.setToolTip(name)
             r, g, b, a = bgra[2], bgra[1], bgra[0], bgra[3]
             btn.setStyleSheet(
-                f"background: rgba({r},{g},{b},{a}); border: 2px solid #ccc; "
-                f"border-radius: 6px;"
+                f"background: rgba({r},{g},{b},{a}); border: 2px solid #ccc;"
             )
             btn.clicked.connect(lambda _, c=bgra: self.canvas.set_brush_color(c))
             color_grid.addWidget(btn, 0, i)
@@ -417,7 +408,7 @@ class DrawingDialog(QDialog):
         custom_btn.setFixedSize(32, 32)
         custom_btn.setCursor(Qt.PointingHandCursor)
         custom_btn.setToolTip("自定义颜色")
-        custom_btn.setStyleSheet("background: #fff; border: 2px dashed #aaa; border-radius: 6px; font-size: 14px;")
+        custom_btn.setStyleSheet("background: #fff; border: 2px dashed #aaa; font-size: 14px;")
         custom_btn.clicked.connect(self._pick_custom_color)
         color_grid.addWidget(custom_btn, 0, len(PRESET_COLORS))
         layout.addLayout(color_grid)

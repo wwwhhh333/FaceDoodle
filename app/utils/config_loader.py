@@ -33,8 +33,8 @@ DEFAULT_CONFIG = {
         "default_region": "forehead_top",
         "default_scale": 1.0,
         "recent_prompts": [],
-        "window_width": 1280,
-        "window_height": 800
+        "window_width": 1440,
+        "window_height": 860
     },
     "external_editor": {
         "path": "D:/software/sai2/sai2.exe",

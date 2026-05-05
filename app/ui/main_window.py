@@ -54,7 +54,7 @@ class FaceDoodleWindow(QMainWindow):
         self._gallery_items = {}
 
         self.setWindowTitle("FaceDoodle AI - 智能贴纸工坊")
-        self.resize(1280, 820)
+        self.resize(1440, 860)
 
         self._init_stylesheet()
         self._init_ui()
@@ -73,9 +73,8 @@ class FaceDoodleWindow(QMainWindow):
                 background: #fff;
                 color: #333;
                 border: 2px solid #ddd;
-                border-radius: 12px;
-                padding: 10px 16px;
-                font-size: 15px;
+                padding: 12px 18px;
+                font-size: 16px;
             }
             QLineEdit:focus { border-color: #667eea; }
             QLineEdit:disabled { background: #f0f0f0; color: #bbb; }
@@ -83,8 +82,8 @@ class FaceDoodleWindow(QMainWindow):
             QMessageBox { background: #fff; }
             QMessageBox QLabel { color: #333; }
             QMessageBox QPushButton {
-                background: #667eea; color: white; border-radius: 8px;
-                padding: 6px 20px; font-size: 13px;
+                background: #667eea; color: white;
+                padding: 8px 24px; font-size: 14px;
             }
         """)
 
@@ -98,12 +97,12 @@ class FaceDoodleWindow(QMainWindow):
         # ── 1. 顶栏 ──
         top_bar = GradientBar("🎨  FaceDoodle  AI 贴纸工坊")
         settings_btn = QPushButton("⚙️")
-        settings_btn.setFixedSize(36, 36)
+        settings_btn.setFixedSize(40, 40)
         settings_btn.setCursor(Qt.PointingHandCursor)
         settings_btn.setStyleSheet("""
             QPushButton {
                 background: rgba(255,255,255,0.15); color: white; border: none;
-                border-radius: 18px; font-size: 18px;
+                font-size: 20px;
             }
             QPushButton:hover { background: rgba(255,255,255,0.3); }
         """)
@@ -111,66 +110,76 @@ class FaceDoodleWindow(QMainWindow):
         top_bar.add_right_widget(settings_btn)
         root.addWidget(top_bar)
 
-        # ── 2. 视频区 ──
+        # ── 2. 中间区域: 视频 + 右侧贴纸库 ──
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
+
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet("background: #e8e8ee; border: none;")
         self.video_label.setMinimumSize(800, 500)
         self.video_label.setMouseTracking(True)
         self.video_label.installEventFilter(self)
-        root.addWidget(self.video_label, stretch=1)
+        content_row.addWidget(self.video_label, stretch=1)
+
+        # 右侧面板 — 贴纸库
+        right_panel = QWidget()
+        right_panel.setFixedWidth(210)
+        right_panel.setStyleSheet("background: #fafafa; border: none;")
+        rp_layout = QVBoxLayout(right_panel)
+        rp_layout.setContentsMargins(8, 12, 8, 8)
+        rp_layout.setSpacing(6)
+
+        gallery_label = QLabel("📚 我的贴纸")
+        gallery_label.setStyleSheet(
+            "color: #555; font-size: 15px; font-weight: bold; background: transparent; border: none;"
+        )
+        rp_layout.addWidget(gallery_label)
+
+        self.gallery = GalleryScrollArea()
+        rp_layout.addWidget(self.gallery, stretch=1)
+
+        self.sticker_count_label = QLabel("")
+        self.sticker_count_label.setStyleSheet(
+            "color: #888; font-size: 11px; background: transparent; border: none;"
+        )
+        rp_layout.addWidget(self.sticker_count_label)
+
+        content_row.addWidget(right_panel)
+        root.addLayout(content_row, stretch=1)
 
         self.edit_indicator = QLabel("🖊 编辑模式: 开启", self)
         self.edit_indicator.setStyleSheet(
             "color: #059669; background: rgba(255,255,255,230); font-size: 14px; "
-            "padding: 6px 14px; border-radius: 8px; border: 1px solid #10b981;"
+            "padding: 6px 14px; border: 1px solid #10b981;"
         )
         self.edit_indicator.setAlignment(Qt.AlignCenter)
         self.edit_indicator.setVisible(False)
 
         # ── 3. 输入区 ──
         input_row = QWidget()
-        input_row.setStyleSheet("background: #fff;")
+        input_row.setStyleSheet("background: #fff; border-top: 1px solid #eee;")
         input_layout = QHBoxLayout(input_row)
-        input_layout.setContentsMargins(16, 10, 16, 10)
-        input_layout.setSpacing(10)
+        input_layout.setContentsMargins(16, 12, 16, 12)
+        input_layout.setSpacing(12)
 
         self.input_box = QLineEdit()
         self.input_box.setPlaceholderText("💡 描述你的创意，例如：一副赛博朋克风格的护目镜...")
         self.input_box.returnPressed.connect(self.send_command)
         input_layout.addWidget(self.input_box)
 
-        self.send_btn = StyledButton("✨ 生成贴纸", "#c026d3", "#e040fb")
+        self.send_btn = StyledButton("✨ 生成贴纸", "#2c2c2c", "#444")
         self.send_btn.clicked.connect(self.send_command)
         input_layout.addWidget(self.send_btn)
 
         root.addWidget(input_row)
 
-        # ── 4. 画廊区 ──
-        gallery_header = QWidget()
-        gallery_header.setStyleSheet("background: #fff; border: none;")
-        gh_layout = QHBoxLayout(gallery_header)
-        gh_layout.setContentsMargins(16, 6, 16, 4)
-        gh_layout.setSpacing(10)
-
-        gallery_label = QLabel("📚 我的贴纸")
-        gallery_label.setStyleSheet("color: #888; font-size: 14px; font-weight: bold; background: transparent; border: none;")
-        gh_layout.addWidget(gallery_label)
-        gh_layout.addStretch()
-
-        self.sticker_count_label = QLabel("")
-        self.sticker_count_label.setStyleSheet("color: #888; font-size: 12px; background: transparent; border: none;")
-        gh_layout.addWidget(self.sticker_count_label)
-        root.addWidget(gallery_header)
-
-        self.gallery = GalleryScrollArea()
-        root.addWidget(self.gallery)
-
-        # ── 5. 操作按钮区 ──
+        # ── 4. 操作按钮区 ──
         action_row = QWidget()
-        action_row.setStyleSheet("background: #fff;")
+        action_row.setStyleSheet("background: #fff; border-top: 1px solid #eee;")
         action_layout = QHBoxLayout(action_row)
-        action_layout.setContentsMargins(16, 6, 16, 8)
+        action_layout.setContentsMargins(16, 8, 16, 10)
         action_layout.setSpacing(10)
 
         self.edit_btn = StyledButton("🖊 编辑", "#7c3aed", "#a855f7")
@@ -206,10 +215,10 @@ class FaceDoodleWindow(QMainWindow):
 
         root.addWidget(action_row)
 
-        # ── 6. 状态栏 ──
+        # ── 5. 状态栏 ──
         self.status_label = QLabel("💡 Ctrl+E 切换编辑 | 左键移动 右键旋转 滚轮缩放 双击重置")
         self.status_label.setStyleSheet(
-            "color: #999; font-size: 11px; padding: 4px; background: #f0f0f5; border: none;"
+            "color: #999; font-size: 12px; padding: 5px; background: #f0f0f5; border: none;"
         )
         self.status_label.setAlignment(Qt.AlignCenter)
         root.addWidget(self.status_label)
