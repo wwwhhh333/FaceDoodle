@@ -373,3 +373,184 @@ def render_face_mesh(frame, face_data):
 
 def apply_head_pose_skew(quad, face_landmarks):
     return _apply_head_pose_skew(quad, face_landmarks)
+
+
+def composite_stickers_to_merged(active_stickers, adjustments, face_data):
+    """Merge multiple sticker instances into a single composite RGBA image.
+
+    Two-pass approach:
+    1. Compute all canvas quads via full_face perspective, find bounding box.
+    2. Expand canvas to encompass all quads (maintaining full_face aspect ratio),
+       shift quads, warp and composite.
+
+    Returns (merged_image, location, placement_scale) where placement_scale
+    accounts for canvas expansion so content aligns correctly when placed.
+    """
+    if not active_stickers:
+        print("[Composite] 没有贴纸实例")
+        return None, None, 1.0, 0.0, 0.0
+    if not face_data or "nose_tip" not in face_data:
+        print("[Composite] 无人脸数据或缺少 nose_tip")
+        return None, None, 1.0, 0.0, 0.0
+
+    face_w = max(float(face_data.get("face_width", 1.0)), 1.0)
+
+    full_rect = face_data.get("landmark_rects", {}).get("full_face")
+    if not full_rect:
+        print("[Composite] 缺少 full_face 区域")
+        return None, None, 1.0, 0.0, 0.0
+    _, _, fw, fh = full_rect
+    full_aspect = fw / max(float(fh), 0.001)
+
+    canvas_scale = 3.0
+    init_canvas_w = int(fw * canvas_scale)
+    init_canvas_h = int(fh * canvas_scale)
+
+    full_quad = _build_location_quad(face_data, "full_face", (init_canvas_h, init_canvas_w, 4), 1.0)
+    if full_quad is None:
+        print("[Composite] 无法构建 full_face quad")
+        return None, None, 1.0, 0.0, 0.0
+    full_quad = _apply_head_pose_skew(full_quad, face_data)
+
+    dst_rect = np.array([
+        [0, 0], [init_canvas_w - 1, 0],
+        [init_canvas_w - 1, init_canvas_h - 1], [0, init_canvas_h - 1],
+    ], dtype=np.float32)
+    frame_to_canvas = cv2.getPerspectiveTransform(full_quad.astype(np.float32), dst_rect)
+
+    # ── Pass 1: compute all canvas quads, collect sticker data ──
+    sticker_data = []  # (sticker, canvas_quad)
+
+    for instance in active_stickers:
+        sticker = instance.get("sticker")
+        if sticker is None or sticker.shape[2] != 4:
+            continue
+
+        location = instance.get("location", "forehead_top")
+        quad = _build_location_quad(face_data, location, sticker.shape[:2], instance.get("scale", 1.0))
+        if quad is None:
+            continue
+
+        adj = adjustments.get(instance["instance_id"],
+                              {"offset_x": 0.0, "offset_y": 0.0, "rotation": 0.0, "scale_mult": 1.0})
+
+        try:
+            quad = _apply_head_pose_skew(quad, face_data)
+
+            ox = adj.get("offset_x", 0.0) * face_w
+            oy = adj.get("offset_y", 0.0) * face_w
+            quad = quad + np.array([ox, oy], dtype=np.float32)
+
+            angle = adj.get("rotation", 0.0)
+            if abs(angle) > 0.01:
+                center = np.mean(quad, axis=0)
+                rad = np.radians(angle)
+                c, s = np.cos(rad), np.sin(rad)
+                for i in range(4):
+                    dx = quad[i][0] - center[0]
+                    dy = quad[i][1] - center[1]
+                    quad[i][0] = center[0] + dx * c - dy * s
+                    quad[i][1] = center[1] + dx * s + dy * c
+
+            sm = adj.get("scale_mult", 1.0)
+            if abs(sm - 1.0) > 0.001:
+                center = np.mean(quad, axis=0)
+                quad = center + (quad - center) * sm
+
+            quad_h = np.hstack([quad, np.ones((4, 1), dtype=np.float32)])
+            canvas_pts = (frame_to_canvas @ quad_h.T).T
+            canvas_quad = np.zeros((4, 2), dtype=np.float32)
+            canvas_quad[:, 0] = canvas_pts[:, 0] / np.maximum(canvas_pts[:, 2], 1e-6)
+            canvas_quad[:, 1] = canvas_pts[:, 1] / np.maximum(canvas_pts[:, 2], 1e-6)
+
+            sticker_data.append((sticker, canvas_quad))
+        except Exception as e:
+            print(f"[Composite] 贴纸预处理异常: {e}")
+
+    if not sticker_data:
+        print("[Composite] 没有有效的贴纸数据")
+        return None, None, 1.0, 0.0, 0.0
+
+    # Find bounding box of all canvas quads
+    all_pts = np.vstack([cq for _, cq in sticker_data])
+    min_x = float(np.min(all_pts[:, 0]))
+    min_y = float(np.min(all_pts[:, 1]))
+    max_x = float(np.max(all_pts[:, 0]))
+    max_y = float(np.max(all_pts[:, 1]))
+
+    # Expand bbox to match full_face aspect ratio
+    bbox_w = max_x - min_x
+    bbox_h = max_y - min_y
+
+    if bbox_w / max(bbox_h, 0.001) < full_aspect:
+        new_w = bbox_h * full_aspect
+        expand = (new_w - bbox_w) / 2.0
+        min_x -= expand
+        max_x += expand
+    else:
+        new_h = bbox_w / max(full_aspect, 0.001)
+        expand = (new_h - bbox_h) / 2.0
+        min_y -= expand
+        max_y += expand
+
+    # Small padding
+    pad = max(max_x - min_x, max_y - min_y) * 0.02
+    min_x -= pad
+    max_x += pad
+    min_y -= pad
+    max_y += pad
+
+    final_canvas_w = max(int(max_x - min_x + 1), 1)
+    final_canvas_h = max(int(max_y - min_y + 1), 1)
+
+    # Placement scale: makes quad large enough for all content
+    placement_scale = final_canvas_h / max(init_canvas_h, 1)
+
+    # Compute offset so full_face content maps to the correct position.
+    # In the merged sticker, full_face content occupies rows [-min_y, -min_y+init_canvas_h],
+    # but after scaling by placement_scale, the content center shifts.
+    # offset = fh * (scale/2 - 1/2 + scale * min / final_canvas_wh) / face_w
+    offset_x = (fw / face_w) * (placement_scale / 2.0 - 0.5 + placement_scale * min_x / max(final_canvas_w, 1))
+    offset_y = (fh / face_w) * (placement_scale / 2.0 - 0.5 + placement_scale * min_y / max(final_canvas_h, 1))
+
+    # Shift all quads into the expanded canvas
+    shift = np.array([min_x, min_y], dtype=np.float32)
+    for i in range(len(sticker_data)):
+        sticker_data[i] = (sticker_data[i][0], sticker_data[i][1] - shift)
+
+    # ── Pass 2: warp and composite onto expanded canvas ──
+    merged = np.zeros((final_canvas_h, final_canvas_w, 4), dtype=np.uint8)
+    composited_count = 0
+
+    for sticker, canvas_quad in sticker_data:
+        try:
+            sh, sw = sticker.shape[:2]
+            src = np.array([
+                [0, 0], [sw - 1, 0], [sw - 1, sh - 1], [0, sh - 1],
+            ], dtype=np.float32)
+
+            matrix = cv2.getPerspectiveTransform(src, canvas_quad.astype(np.float32))
+            warped = cv2.warpPerspective(
+                sticker, matrix, (final_canvas_w, final_canvas_h),
+                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0)
+            )
+
+            fg_alpha = warped[:, :, 3].astype(np.float32) / 255.0
+            merged_f = merged.astype(np.float32)
+            warped_f = warped.astype(np.float32)
+            for c in range(3):
+                merged_f[:, :, c] = warped_f[:, :, c] * fg_alpha + merged_f[:, :, c] * (1.0 - fg_alpha)
+            merged_f[:, :, 3] = warped_f[:, :, 3] + merged_f[:, :, 3] * (1.0 - fg_alpha)
+            merged = np.clip(merged_f, 0, 255).astype(np.uint8)
+
+            composited_count += 1
+        except Exception as e:
+            print(f"[Composite] 贴纸合成异常: {e}")
+
+    if composited_count == 0:
+        print("[Composite] 没有成功合成任何贴纸")
+        return None, None, 1.0, 0.0, 0.0
+
+    print(f"[Composite] 合成完成: {composited_count} 枚 → {final_canvas_w}x{final_canvas_h} "
+          f"(scale={placement_scale:.2f}, offset=({offset_x:.3f},{offset_y:.3f}))")
+    return merged, "full_face", placement_scale, offset_x, offset_y

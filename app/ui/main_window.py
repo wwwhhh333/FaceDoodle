@@ -7,7 +7,8 @@ from PyQt5.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 
 from app.ui.widgets import (ThumbnailCard, StyledButton, GradientBar,
-                            GalleryScrollArea, DrawingDialog, _bgra_to_qpixmap)
+                            GalleryScrollArea, DrawingDialog, _bgra_to_qpixmap,
+                            ActiveStickersPanel)
 from app.utils import storage
 from app.core.brush import load_brush_config
 from app.core.templates import load_templates
@@ -17,6 +18,7 @@ class VideoUpdateThread(QThread):
     change_pixmap_signal = pyqtSignal(np.ndarray)
     sticker_saved_signal = pyqtSignal(str)
     generation_failed_signal = pyqtSignal(str)
+    active_stickers_signal = pyqtSignal(object)
 
     def __init__(self, display_queue, gallery_queue):
         super().__init__()
@@ -36,6 +38,8 @@ class VideoUpdateThread(QThread):
                         self.sticker_saved_signal.emit(item.get("sticker_id", ""))
                     elif action == "generation_failed":
                         self.generation_failed_signal.emit(item.get("error", "生成失败"))
+                    elif action == "active_stickers_changed":
+                        self.active_stickers_signal.emit(item)
             except Exception:
                 pass
 
@@ -59,7 +63,9 @@ class FaceDoodleWindow(QMainWindow):
         self._last_mouse_pos = None
         self._frame_size = None
         self._current_sticker_id = None
-        self._active_sticker_id = None
+        self._active_instance_ids = []      # instance_ids currently on face
+        self._edit_target_id = None
+        self._gallery_selected_ids = set()  # multi-select in gallery
         self._gallery_items = {}
         self._gallery_filter = "stickers"
         self._template_cards = {}
@@ -89,6 +95,7 @@ class FaceDoodleWindow(QMainWindow):
         self.video_thread.change_pixmap_signal.connect(self.update_image)
         self.video_thread.sticker_saved_signal.connect(self._on_sticker_saved)
         self.video_thread.generation_failed_signal.connect(self._on_generation_failed)
+        self.video_thread.active_stickers_signal.connect(self._on_active_stickers_changed)
         self.video_thread.start()
 
     def _init_stylesheet(self):
@@ -136,10 +143,33 @@ class FaceDoodleWindow(QMainWindow):
         top_bar.add_right_widget(settings_btn)
         root.addWidget(top_bar)
 
-        # ── 2. 中间区域: 视频 + 右侧贴纸库 ──
+        # ── 2. 中间区域: 左侧活动贴纸 + 视频 + 右侧贴纸库 ──
         content_row = QHBoxLayout()
         content_row.setContentsMargins(0, 0, 0, 0)
         content_row.setSpacing(0)
+
+        # 左侧边栏 — 已添加到面部的贴纸
+        left_panel = QWidget()
+        left_panel.setFixedWidth(100)
+        left_panel.setStyleSheet("background: #fafafa; border: none;")
+        lp_layout = QVBoxLayout(left_panel)
+        lp_layout.setContentsMargins(4, 8, 4, 8)
+        lp_layout.setSpacing(4)
+
+        left_title = QLabel("面部贴纸")
+        left_title.setAlignment(Qt.AlignCenter)
+        left_title.setStyleSheet("color: #999; font-size: 10px; font-weight: bold; background: transparent; border: none; padding-bottom: 4px;")
+        lp_layout.addWidget(left_title)
+
+        self.active_panel = ActiveStickersPanel()
+        self.active_panel.select_edit_target.connect(
+            lambda iid: self.gallery_queue.put({"action": "select_edit_target", "instance_id": iid})
+        )
+        self.active_panel.remove_sticker.connect(
+            lambda iid: self.gallery_queue.put({"action": "remove_sticker", "instance_id": iid})
+        )
+        lp_layout.addWidget(self.active_panel, stretch=1)
+        content_row.addWidget(left_panel)
 
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignCenter)
@@ -185,6 +215,19 @@ class FaceDoodleWindow(QMainWindow):
         )
         rp_layout.addWidget(self.sticker_count_label)
 
+        # Add to Face button
+        self.add_to_face_btn = QPushButton("添加到面部")
+        self.add_to_face_btn.setCursor(Qt.PointingHandCursor)
+        self.add_to_face_btn.setStyleSheet(
+            "QPushButton { background: #667eea; color: white; border: none; "
+            "padding: 6px 0; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { background: #818cf8; }"
+            "QPushButton:disabled { background: #ddd; color: #999; }"
+        )
+        self.add_to_face_btn.clicked.connect(self._on_add_selected_to_face)
+        self.add_to_face_btn.setEnabled(False)
+        rp_layout.addWidget(self.add_to_face_btn)
+
         content_row.addWidget(right_panel)
         root.addLayout(content_row, stretch=1)
 
@@ -220,6 +263,16 @@ class FaceDoodleWindow(QMainWindow):
         action_layout = QHBoxLayout(action_row)
         action_layout.setContentsMargins(16, 8, 16, 10)
         action_layout.setSpacing(10)
+
+        self.merge_btn = StyledButton("合并", "#f59e0b", "#fbbf24")
+        self.merge_btn.setEnabled(False)
+        self.merge_btn.clicked.connect(self._on_merge_group)
+        action_layout.addWidget(self.merge_btn)
+
+        sep_merge = QWidget()
+        sep_merge.setFixedWidth(1)
+        sep_merge.setStyleSheet("background: #ddd; border: none; margin: 0 6px;")
+        action_layout.addWidget(sep_merge)
 
         self.edit_btn = StyledButton("编辑", "#7c3aed", "#a855f7")
         self.edit_btn.setCheckable(True)
@@ -512,8 +565,8 @@ class FaceDoodleWindow(QMainWindow):
                 tid = t["id"]
                 card = ThumbnailCard(tid, t["thumb"], t["name"], False)
                 card.clicked.connect(self._on_template_click)
-                card.set_selected(tid == self._current_sticker_id)
-                card.set_active(tid == self._active_sticker_id)
+                card.set_selected(tid in self._gallery_selected_ids)
+                card.set_active(False)
                 self.gallery.add_card(card)
                 self._template_cards[tid] = card
             self._update_gallery_info()
@@ -527,8 +580,8 @@ class FaceDoodleWindow(QMainWindow):
             thumb = storage.get_sticker_thumb(sid)
             card = ThumbnailCard(sid, thumb, s.get("prompt", ""), s.get("favorite", False))
             card.clicked.connect(self._on_gallery_click)
-            card.set_selected(sid == self._current_sticker_id)
-            card.set_active(sid == self._active_sticker_id)
+            card.set_selected(sid in self._gallery_selected_ids)
+            card.set_active(False)
             self.gallery.add_card(card)
             self._gallery_items[sid] = card
         self._update_gallery_info()
@@ -550,49 +603,49 @@ class FaceDoodleWindow(QMainWindow):
         self.gallery.show_placeholder(len(self._gallery_items) == 0 and len(self._template_cards) == 0)
 
     def _on_template_click(self, template_id):
-        if self._active_sticker_id == template_id:
-            self._active_sticker_id = None
-            self._current_sticker_id = None
-            for card in self._template_cards.values():
-                card.set_selected(False)
-                card.set_active(False)
-            self.gallery_queue.put({"action": "load_sticker", "sticker_id": None})
+        # Multi-select: toggle in selection set
+        if template_id in self._gallery_selected_ids:
+            self._gallery_selected_ids.discard(template_id)
         else:
-            self._current_sticker_id = template_id
-            self._active_sticker_id = template_id
-            for tid, card in self._template_cards.items():
-                card.set_selected(tid == template_id)
-                card.set_active(tid == template_id)
-            templates = load_templates()
-            for t in templates:
-                if t["id"] == template_id:
-                    self.gallery_queue.put({"action": "load_template", "template": t})
-                    break
+            self._gallery_selected_ids.add(template_id)
+        self._current_sticker_id = template_id
+        self._update_gallery_selection_visuals()
 
     def _on_gallery_click(self, sticker_id):
-        if self._active_sticker_id == sticker_id:
-            self._active_sticker_id = None
-            self._current_sticker_id = None
-            for card in self._gallery_items.values():
-                card.set_selected(False)
-                card.set_active(False)
-            for card in self._template_cards.values():
-                card.set_selected(False)
-                card.set_active(False)
-            self.gallery_queue.put({"action": "load_sticker", "sticker_id": None})
+        # Multi-select: toggle in selection set
+        if sticker_id in self._gallery_selected_ids:
+            self._gallery_selected_ids.discard(sticker_id)
         else:
-            self._current_sticker_id = sticker_id
-            self._active_sticker_id = sticker_id
-            for sid, card in self._gallery_items.items():
-                card.set_selected(sid == sticker_id)
-                card.set_active(sid == sticker_id)
-            for tid, card in self._template_cards.items():
-                card.set_selected(tid == sticker_id)
-                card.set_active(tid == sticker_id)
-            self.gallery_queue.put({"action": "load_sticker", "sticker_id": sticker_id})
+            self._gallery_selected_ids.add(sticker_id)
+        self._current_sticker_id = sticker_id
+        self._update_gallery_selection_visuals()
+
+    def _update_gallery_selection_visuals(self):
+        for sid, card in self._gallery_items.items():
+            card.set_selected(sid in self._gallery_selected_ids)
+            card.set_active(False)  # Active state comes from active_panel now
+        for tid, card in self._template_cards.items():
+            card.set_selected(tid in self._gallery_selected_ids)
+            card.set_active(False)
+        self.add_to_face_btn.setEnabled(len(self._gallery_selected_ids) > 0)
+
+    def _on_add_selected_to_face(self):
+        if not self._gallery_selected_ids:
+            return
+        for sid in self._gallery_selected_ids:
+            sid_type = "template" if sid in self._template_cards else "sticker"
+            if sid_type == "template":
+                templates = load_templates()
+                for t in templates:
+                    if t["id"] == sid:
+                        self.gallery_queue.put({"action": "load_template", "template": t})
+                        break
+            else:
+                self.gallery_queue.put({"action": "add_sticker", "sticker_id": sid})
+        self._gallery_selected_ids.clear()
+        self._update_gallery_selection_visuals()
 
     def _on_sticker_saved(self, sticker_id):
-        self._active_sticker_id = sticker_id
         self._current_sticker_id = sticker_id
         self._load_gallery()
         self._reenable_input()
@@ -710,17 +763,21 @@ class FaceDoodleWindow(QMainWindow):
 
     def _toggle_edit_mode(self):
         self._edit_mode = not self._edit_mode
-        self.adjustment_queue.put({"action": "toggle_edit"})
         self.edit_btn.setChecked(self._edit_mode)
         self.edit_btn.setText("编辑中" if self._edit_mode else "编辑")
         if self._edit_mode:
             if self._face_draw_mode:
                 self._toggle_face_draw_mode()
+            # Select last active sticker as edit target, or leave None
+            if self._active_instance_ids:
+                self.gallery_queue.put({"action": "select_edit_target",
+                                        "instance_id": self._active_instance_ids[-1]})
             self.edit_indicator.setVisible(True)
             self._position_indicator()
             self.input_box.setEnabled(False)
             self.send_btn.setEnabled(False)
         else:
+            self.gallery_queue.put({"action": "select_edit_target", "instance_id": None})
             self.edit_indicator.setVisible(False)
             self.input_box.setEnabled(True)
             self.send_btn.setEnabled(True)
@@ -730,6 +787,53 @@ class FaceDoodleWindow(QMainWindow):
         label_pos = self.video_label.pos()
         margin = 12
         self.edit_indicator.move(label_pos.x() + margin, label_pos.y() + margin)
+
+    # ── 活动贴纸状态 ──
+
+    def _on_active_stickers_changed(self, data):
+        instances = data.get("instances", [])
+        edit_target_id = data.get("edit_target_id")
+
+        thumbs_info = {}
+        templates = load_templates()
+        for inst in instances:
+            iid = inst["instance_id"]
+            sid = inst.get("sticker_id")
+            region = inst.get("region", "")
+            thumb = None
+            if sid:
+                thumb = storage.get_sticker_thumb(sid)
+                if thumb is None:
+                    for t in templates:
+                        if t["id"] == sid:
+                            thumb = t.get("thumb")
+                            break
+            thumbs_info[iid] = {"thumb": thumb, "region": region}
+
+        self._active_instance_ids = [inst["instance_id"] for inst in instances]
+        self._edit_target_id = edit_target_id
+        self._sync_active_panel(thumbs_info)
+
+    def _sync_active_panel(self, thumbs_info=None):
+        if not self._active_instance_ids:
+            self.active_panel.clear_all()
+            self._update_merge_button()
+            return
+        if thumbs_info is None:
+            thumbs_info = {}
+        self.active_panel.sync(self._active_instance_ids, thumbs_info, self._edit_target_id)
+        self._update_merge_button()
+
+    def _update_merge_button(self):
+        self.merge_btn.setEnabled(len(self._active_instance_ids) >= 2)
+
+    def _on_merge_group(self):
+        if len(self._active_instance_ids) < 2:
+            return
+        self.gallery_queue.put({
+            "action": "merge_group",
+            "instance_ids": list(self._active_instance_ids),
+        })
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

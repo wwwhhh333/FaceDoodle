@@ -1,5 +1,6 @@
 import glob
 import os
+import uuid
 import cv2
 import numpy as np
 import threading
@@ -10,7 +11,8 @@ from app.ai.agent import FaceDoodleAgent
 from app.ai.generator import ComfyClient
 from app.core.face_mesh import FaceDetector
 from app.core.renderer import (render_scene, render_loading_progress, render_face_mesh,
-                                apply_head_pose_skew, _build_location_quad)
+                                apply_head_pose_skew, _build_location_quad,
+                                composite_stickers_to_merged)
 from app.core.face_draw import FaceDrawCanvas
 from app.utils.image_proc import load_rgba_sticker
 from app.utils import storage
@@ -186,17 +188,15 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
     detector = FaceDetector()
     result_queue = queue.Queue()
 
-    active_content = None
+    active_content = None  # backward compat for AI generation result
     pending_command = None
 
-    adjustment = {
-        "offset_x": 0.0,
-        "offset_y": 0.0,
-        "rotation": 0.0,
-        "scale_mult": 1.0,
-        "edit_mode": False,
-    }
-    _sticker_adjustments = {}  # sticker_id -> adjustment dict
+    active_stickers = []          # list[dict], z-order: index 0 = bottom
+    edit_target_id = None         # instance_id currently receiving edit commands
+    adjustments = {}              # instance_id -> {offset_x, offset_y, rotation, scale_mult}
+    _sticker_adjustments = {}     # sticker_id -> default adjustment dict (for restore)
+    MAX_STICKERS = 20
+    cached_face_data = None       # last good face data for merge fallback
 
     face_canvas = FaceDrawCanvas()
     face_draw_active = False
@@ -208,7 +208,14 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
             temp_files.sort(key=os.path.getmtime, reverse=True)
             mock_sticker = load_rgba_sticker(temp_files[0])
             if mock_sticker is not None:
-                active_content = {"sticker": mock_sticker, "location": "forehead", "scale": 1.0}
+                instance_id = str(uuid.uuid4())
+                active_stickers.append({
+                    "instance_id": instance_id, "sticker_id": None,
+                    "sticker": mock_sticker, "location": "forehead",
+                    "scale": 1.0, "prompt": "Mock",
+                })
+                adjustments[instance_id] = {"offset_x": 0.0, "offset_y": 0.0, "rotation": 0.0, "scale_mult": 1.0}
+                edit_target_id = instance_id
                 print(f"[Consumer] Mock 模式: 已加载 {temp_files[0]}")
 
     try:
@@ -237,30 +244,40 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                 if "error" in new_content:
                     display_queue.put({"action": "generation_failed", "error": new_content["error"]})
                 else:
-                    old_sid = active_content.get("sticker_id") if active_content else None
-                    if old_sid:
-                        saved = dict(adjustment)
-                        _sticker_adjustments[old_sid] = saved
-                        storage.save_sticker_adjustments(old_sid, saved)
-                    active_content = new_content
-                    adjustment["offset_x"] = 0.0
-                    adjustment["offset_y"] = 0.0
-                    adjustment["rotation"] = 0.0
-                    adjustment["scale_mult"] = 1.0
                     try:
+                        if len(active_stickers) >= MAX_STICKERS:
+                            print(f"[Consumer] 贴纸数量已达上限 ({MAX_STICKERS})，跳过自动添加")
+                            continue
                         sticker_id = storage.save_sticker(
                             new_content['sticker'],
                             {"prompt": new_content.get("prompt", ""),
                              "location": new_content.get("location", "forehead"),
                              "scale": new_content.get("scale", 1.0)}
                         )
+                        instance_id = str(uuid.uuid4())
+                        # Load default adjustment from previous instances of same sticker
+                        saved_adj = _sticker_adjustments.get(sticker_id) or storage.get_sticker_adjustments(sticker_id)
+                        adj = dict(saved_adj) if saved_adj else {"offset_x": 0.0, "offset_y": 0.0, "rotation": 0.0, "scale_mult": 1.0}
+                        adjustments[instance_id] = adj
+                        active_stickers.append({
+                            "instance_id": instance_id,
+                            "sticker_id": sticker_id,
+                            "sticker": new_content['sticker'],
+                            "location": new_content.get("location", "forehead"),
+                            "scale": new_content.get("scale", 1.0),
+                            "prompt": new_content.get("prompt", ""),
+                        })
+                        edit_target_id = instance_id
                         display_queue.put({"action": "sticker_saved", "sticker_id": sticker_id})
-                    except Exception:
-                        pass
+                        active_content = new_content  # backward compat
+                    except Exception as e:
+                        print(f"[Consumer] 保存贴纸失败: {e}")
             except queue.Empty:
                 pass
 
             face_data = detector.get_landmarks(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if face_data and "nose_tip" in face_data:
+                cached_face_data = face_data
             raw_face_w = float(face_data.get("face_width", 200.0)) if face_data else 200.0
             face_w = max(raw_face_w, 1.0)
 
@@ -271,90 +288,161 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                 except Exception:
                     break
                 action = msg.get("action")
+                if edit_target_id is None:
+                    continue
                 if action == "toggle_edit":
-                    adjustment["edit_mode"] = not adjustment["edit_mode"]
+                    pass
                 elif action == "move":
-                    adjustment["offset_x"] += msg.get("dx", 0.0) / face_w
-                    adjustment["offset_y"] += msg.get("dy", 0.0) / face_w
+                    dx = msg.get("dx", 0.0) / face_w
+                    dy = msg.get("dy", 0.0) / face_w
+                    if edit_target_id in adjustments:
+                        adjustments[edit_target_id]["offset_x"] += dx
+                        adjustments[edit_target_id]["offset_y"] += dy
                 elif action == "rotate":
-                    adjustment["rotation"] += msg.get("d_angle", 0.0)
+                    d_angle = msg.get("d_angle", 0.0)
+                    if edit_target_id in adjustments:
+                        adjustments[edit_target_id]["rotation"] += d_angle
                 elif action == "scale":
-                    adjustment["scale_mult"] *= msg.get("multiplier", 1.0)
-                    adjustment["scale_mult"] = max(0.05, adjustment["scale_mult"])
+                    mult = msg.get("multiplier", 1.0)
+                    if edit_target_id in adjustments:
+                        adjustments[edit_target_id]["scale_mult"] *= mult
+                        adjustments[edit_target_id]["scale_mult"] = max(0.05, adjustments[edit_target_id]["scale_mult"])
                 elif action == "reset":
-                    adjustment["offset_x"] = 0.0
-                    adjustment["offset_y"] = 0.0
-                    adjustment["rotation"] = 0.0
-                    adjustment["scale_mult"] = 1.0
+                    if edit_target_id in adjustments:
+                        adjustments[edit_target_id]["offset_x"] = 0.0
+                        adjustments[edit_target_id]["offset_y"] = 0.0
+                        adjustments[edit_target_id]["rotation"] = 0.0
+                        adjustments[edit_target_id]["scale_mult"] = 1.0
 
-            # 处理画廊指令（加载已有贴纸）
+            # 处理画廊指令（加载已有贴纸 / 多贴纸管理）
             while not gallery_queue.empty():
                 try:
                     gmsg = gallery_queue.get(block=False)
                 except Exception:
                     break
-                if gmsg.get("action") == "load_template":
-                    t = gmsg.get("template")
-                    if t and t.get("image") is not None:
-                        old_sid = active_content.get("sticker_id") if active_content else None
-                        if old_sid:
-                            saved = dict(adjustment)
-                            _sticker_adjustments[old_sid] = saved
-                            storage.save_sticker_adjustments(old_sid, saved)
-                        active_content = {
-                            "sticker": t["image"],
-                            "location": t.get("region", "forehead_top"),
-                            "scale": 1.0,
-                            "sticker_id": t["id"],
-                            "prompt": t.get("name", "模板"),
-                        }
-                        adjustment["offset_x"] = 0.0
-                        adjustment["offset_y"] = 0.0
-                        adjustment["rotation"] = 0.0
-                        adjustment["scale_mult"] = 1.0
-                    else:
-                        active_content = None
-                        adjustment["offset_x"] = 0.0
-                        adjustment["offset_y"] = 0.0
-                        adjustment["rotation"] = 0.0
-                        adjustment["scale_mult"] = 1.0
-                elif gmsg.get("action") == "load_sticker":
+                action = gmsg.get("action")
+
+                def _add_sticker_instance(sticker_img, sid, location, scale, prompt):
+                    """Helper: add a sticker instance to active_stickers."""
+                    instance_id = str(uuid.uuid4())
+                    saved = _sticker_adjustments.get(sid) or storage.get_sticker_adjustments(sid)
+                    adj = dict(saved) if saved else {"offset_x": 0.0, "offset_y": 0.0, "rotation": 0.0, "scale_mult": 1.0}
+                    adjustments[instance_id] = adj
+                    active_stickers.append({
+                        "instance_id": instance_id, "sticker_id": sid,
+                        "sticker": sticker_img, "location": location,
+                        "scale": scale, "prompt": prompt,
+                    })
+                    return instance_id
+
+                if action == "add_sticker":
+                    if len(active_stickers) >= MAX_STICKERS:
+                        print(f"[Consumer] 贴纸数量已达上限 ({MAX_STICKERS})，忽略添加请求")
+                        continue
                     sid = gmsg.get("sticker_id")
-                    # 保存当前贴纸的调整状态
-                    old_sid = active_content.get("sticker_id") if active_content else None
-                    if old_sid:
-                        saved = dict(adjustment)
-                        _sticker_adjustments[old_sid] = saved
-                        storage.save_sticker_adjustments(old_sid, saved)
                     if sid:
                         loaded, meta = storage.get_sticker(sid)
                         if loaded is not None and meta is not None:
-                            active_content = {
-                                "sticker": loaded,
-                                "location": meta.get("region", "forehead_top"),
-                                "scale": meta.get("scale", 1.0),
-                                "sticker_id": sid,
-                                "prompt": meta.get("prompt", ""),
-                            }
-                            # 恢复该贴纸的历史调整：优先内存，其次磁盘，否则重置
-                            saved = _sticker_adjustments.get(sid) or storage.get_sticker_adjustments(sid)
-                            if saved:
-                                adjustment["offset_x"] = saved.get("offset_x", 0.0)
-                                adjustment["offset_y"] = saved.get("offset_y", 0.0)
-                                adjustment["rotation"] = saved.get("rotation", 0.0)
-                                adjustment["scale_mult"] = saved.get("scale_mult", 1.0)
-                                _sticker_adjustments[sid] = saved
-                            else:
-                                adjustment["offset_x"] = 0.0
-                                adjustment["offset_y"] = 0.0
-                                adjustment["rotation"] = 0.0
-                                adjustment["scale_mult"] = 1.0
-                    else:
+                            iid = _add_sticker_instance(loaded, sid,
+                                meta.get("region", "forehead_top"), meta.get("scale", 1.0),
+                                meta.get("prompt", ""))
+                            edit_target_id = iid
+                            # backward compat
+                            active_content = {"sticker": loaded, "location": meta.get("region", "forehead_top"),
+                                              "scale": meta.get("scale", 1.0), "sticker_id": sid, "prompt": meta.get("prompt", "")}
+                elif action == "remove_sticker":
+                    iid = gmsg.get("instance_id")
+                    removed_sticker_id = None
+                    for s in active_stickers:
+                        if s["instance_id"] == iid:
+                            removed_sticker_id = s.get("sticker_id")
+                            break
+                    active_stickers = [s for s in active_stickers if s["instance_id"] != iid]
+                    adjustments.pop(iid, None)
+                    if edit_target_id == iid:
+                        edit_target_id = active_stickers[-1]["instance_id"] if active_stickers else None
+                    if active_content and active_content.get("sticker_id") == removed_sticker_id:
                         active_content = None
-                        adjustment["offset_x"] = 0.0
-                        adjustment["offset_y"] = 0.0
-                        adjustment["rotation"] = 0.0
-                        adjustment["scale_mult"] = 1.0
+                elif action == "select_edit_target":
+                    iid = gmsg.get("instance_id")
+                    if iid and any(s["instance_id"] == iid for s in active_stickers):
+                        edit_target_id = iid
+                    elif not iid:
+                        edit_target_id = None
+                elif action == "load_template":
+                    t = gmsg.get("template")
+                    if t and t.get("image") is not None:
+                        if len(active_stickers) >= MAX_STICKERS:
+                            print(f"[Consumer] 贴纸数量已达上限 ({MAX_STICKERS})，忽略添加请求")
+                            continue
+                        iid = _add_sticker_instance(t["image"], t["id"],
+                            t.get("region", "forehead_top"), 1.0, t.get("name", "模板"))
+                        edit_target_id = iid
+                        active_content = {"sticker": t["image"], "location": t.get("region", "forehead_top"),
+                                          "scale": 1.0, "sticker_id": t["id"], "prompt": t.get("name", "模板")}
+                    else:
+                        active_stickers.clear()
+                        adjustments.clear()
+                        edit_target_id = None
+                        active_content = None
+                elif action == "load_sticker":
+                    sid = gmsg.get("sticker_id")
+                    if sid:
+                        if len(active_stickers) >= MAX_STICKERS:
+                            print(f"[Consumer] 贴纸数量已达上限 ({MAX_STICKERS})，忽略添加请求")
+                            continue
+                        loaded, meta = storage.get_sticker(sid)
+                        if loaded is not None and meta is not None:
+                            iid = _add_sticker_instance(loaded, sid,
+                                meta.get("region", "forehead_top"), meta.get("scale", 1.0),
+                                meta.get("prompt", ""))
+                            edit_target_id = iid
+                            active_content = {"sticker": loaded, "location": meta.get("region", "forehead_top"),
+                                              "scale": meta.get("scale", 1.0), "sticker_id": sid, "prompt": meta.get("prompt", "")}
+                    else:
+                        active_stickers.clear()
+                        adjustments.clear()
+                        edit_target_id = None
+                        active_content = None
+                elif action == "merge_group":
+                    iids = set(gmsg.get("instance_ids", []))
+                    merge_face = face_data if (face_data and "nose_tip" in face_data) else cached_face_data
+                    if len(iids) >= 2 and merge_face:
+                        to_merge = [s for s in active_stickers if s["instance_id"] in iids]
+                        if len(to_merge) >= 2:
+                            merged_img, merged_location, merged_scale, mrg_ox, mrg_oy = composite_stickers_to_merged(
+                                to_merge, adjustments, merge_face)
+                            if merged_img is not None:
+                                prompts = [s.get("prompt", "") for s in to_merge if s.get("prompt")]
+                                merged_prompt = " + ".join(prompts[:3])
+                                sid = storage.save_sticker(merged_img, {
+                                    "prompt": merged_prompt or "合并贴纸",
+                                    "location": merged_location,
+                                    "scale": merged_scale,
+                                })
+                                # Remove merged instances
+                                for s in to_merge:
+                                    iid = s["instance_id"]
+                                    active_stickers = [x for x in active_stickers if x["instance_id"] != iid]
+                                    adjustments.pop(iid, None)
+                                # Add merged result
+                                merged_instance_id = str(uuid.uuid4())
+                                adjustments[merged_instance_id] = {
+                                    "offset_x": mrg_ox, "offset_y": mrg_oy,
+                                    "rotation": 0.0, "scale_mult": 1.0,
+                                }
+                                active_stickers.append({
+                                    "instance_id": merged_instance_id,
+                                    "sticker_id": sid,
+                                    "sticker": merged_img,
+                                    "location": merged_location,
+                                    "scale": merged_scale,
+                                    "prompt": merged_prompt,
+                                })
+                                edit_target_id = merged_instance_id
+                                active_content = {"sticker": merged_img, "location": merged_location,
+                                                  "scale": merged_scale, "sticker_id": sid, "prompt": merged_prompt}
+                                display_queue.put({"action": "sticker_saved", "sticker_id": sid})
 
             # 处理面部绘制指令
             while not draw_queue.empty():
@@ -366,7 +454,7 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                 if action == "toggle_draw_mode":
                     face_draw_active = not face_draw_active
                     if face_draw_active:
-                        adjustment["edit_mode"] = False
+                        edit_target_id = None
                 elif action == "set_region":
                     face_draw_region = msg.get("region", "forehead_full")
                 elif action == "set_brush":
@@ -414,11 +502,24 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                 if ai_state["is_generating"]:
                     frame = render_loading_progress(frame, face_data, ai_state)
 
-                if ai_state["is_generating"] or adjustment.get("edit_mode") or face_draw_active:
+                if ai_state["is_generating"] or edit_target_id is not None or face_draw_active:
                     frame = render_face_mesh(frame, face_data)
 
-                if active_content is not None:
-                    frame = render_scene(frame, face_data, active_content, adjustment)
+                # Render all active stickers in z-order (bottom to top)
+                for instance in active_stickers:
+                    if instance["sticker"] is None:
+                        continue
+                    adj = adjustments.get(instance["instance_id"], {
+                        "offset_x": 0.0, "offset_y": 0.0,
+                        "rotation": 0.0, "scale_mult": 1.0,
+                    })
+                    adj["edit_mode"] = (instance["instance_id"] == edit_target_id)
+                    content = {
+                        "sticker": instance["sticker"],
+                        "location": instance["location"],
+                        "scale": instance["scale"],
+                    }
+                    frame = render_scene(frame, face_data, content, adj)
 
                 if face_draw_active and face_canvas.has_content:
                     draw_content = {
@@ -427,6 +528,21 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                         "scale": 1.5,
                     }
                     frame = render_scene(frame, face_data, draw_content, None)
+
+                # Sync active stickers state to UI
+                instances_info = []
+                for s in active_stickers:
+                    instances_info.append({
+                        "instance_id": s["instance_id"],
+                        "sticker_id": s["sticker_id"],
+                        "region": s["location"],
+                    })
+                display_queue.put({
+                    "action": "active_stickers_changed",
+                    "active_count": len(active_stickers),
+                    "instances": instances_info,
+                    "edit_target_id": edit_target_id,
+                })
 
             try:
                 display_queue.put(frame, timeout=0.05)
