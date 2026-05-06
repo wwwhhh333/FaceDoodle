@@ -9,6 +9,8 @@ from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 from app.ui.widgets import (ThumbnailCard, StyledButton, GradientBar,
                             GalleryScrollArea, DrawingDialog, _bgra_to_qpixmap)
 from app.utils import storage
+from app.core.brush import load_brush_config
+from app.core.templates import load_templates
 
 
 class VideoUpdateThread(QThread):
@@ -59,12 +61,17 @@ class FaceDoodleWindow(QMainWindow):
         self._current_sticker_id = None
         self._active_sticker_id = None
         self._gallery_items = {}
+        self._gallery_filter = "stickers"
+        self._template_cards = {}
 
         self._face_draw_mode = False
         self._face_draw_region = "full_face"
         self._face_draw_brush_size = 12
         self._face_draw_brush_color = (0, 0, 0, 255)
+        self._face_draw_brush_type = "hard_round"
+        self._face_draw_pressure_mode = "both"
         self._face_draw_eraser = False
+        self._tablet_in_use = False
         self._face_draw_mouse_down = False
         self._face_draw_stroke_points = []
         self._label_scale = 1.0
@@ -139,6 +146,7 @@ class FaceDoodleWindow(QMainWindow):
         self.video_label.setStyleSheet("background: #e8e8ee; border: none;")
         self.video_label.setMinimumSize(800, 500)
         self.video_label.setMouseTracking(True)
+        self.video_label.setTabletTracking(True)
         self.video_label.installEventFilter(self)
         content_row.addWidget(self.video_label, stretch=1)
 
@@ -150,11 +158,23 @@ class FaceDoodleWindow(QMainWindow):
         rp_layout.setContentsMargins(8, 12, 8, 8)
         rp_layout.setSpacing(6)
 
-        gallery_label = QLabel("我的贴纸")
-        gallery_label.setStyleSheet(
-            "color: #555; font-size: 15px; font-weight: bold; background: transparent; border: none;"
-        )
-        rp_layout.addWidget(gallery_label)
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(0)
+        self._filter_btns = {}
+        for key, label in [("templates", "模板"), ("stickers", "贴纸"), ("favorites", "收藏")]:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton { background: #eee; color: #888; border: none; padding: 5px 0; font-size: 12px; font-weight: bold; }"
+                "QPushButton:hover { background: #e0e0e0; color: #555; }"
+                "QPushButton:checked { background: #667eea; color: white; }"
+            )
+            btn.clicked.connect(lambda checked, k=key: self._on_filter_changed(k))
+            filter_row.addWidget(btn, stretch=1)
+            self._filter_btns[key] = btn
+        self._filter_btns["stickers"].setChecked(True)
+        rp_layout.addLayout(filter_row)
 
         self.gallery = GalleryScrollArea()
         rp_layout.addWidget(self.gallery, stretch=1)
@@ -211,9 +231,14 @@ class FaceDoodleWindow(QMainWindow):
         self.face_draw_btn.clicked.connect(self._toggle_face_draw_mode)
         action_layout.addWidget(self.face_draw_btn)
 
-        self.reset_btn = StyledButton("重置位置", "#94a3b8", "#b0bec5")
+        self.reset_btn = StyledButton("重置", "#94a3b8", "#b0bec5")
         self.reset_btn.clicked.connect(lambda: self.adjustment_queue.put({"action": "reset"}))
         action_layout.addWidget(self.reset_btn)
+
+        sep1 = QWidget()
+        sep1.setFixedWidth(1)
+        sep1.setStyleSheet("background: #ddd; border: none; margin: 0 6px;")
+        action_layout.addWidget(sep1)
 
         self.fav_btn = StyledButton("收藏", "#f59e0b", "#fbbf24")
         self.fav_btn.clicked.connect(self._toggle_favorite)
@@ -223,13 +248,18 @@ class FaceDoodleWindow(QMainWindow):
         self.del_btn.clicked.connect(self._delete_current_sticker)
         action_layout.addWidget(self.del_btn)
 
+        sep2 = QWidget()
+        sep2.setFixedWidth(1)
+        sep2.setStyleSheet("background: #ddd; border: none; margin: 0 6px;")
+        action_layout.addWidget(sep2)
+
         action_layout.addStretch()
 
-        self.import_btn = StyledButton("导入", "#06b6d4", "#22d3ee")
+        self.import_btn = StyledButton("导入图片", "#06b6d4", "#22d3ee")
         self.import_btn.clicked.connect(self._import_image)
         action_layout.addWidget(self.import_btn)
 
-        self.draw_btn = StyledButton("绘制", "#10b981", "#34d399")
+        self.draw_btn = StyledButton("绘制贴纸", "#10b981", "#34d399")
         self.draw_btn.clicked.connect(self._open_drawing_dialog)
         action_layout.addWidget(self.draw_btn)
 
@@ -321,6 +351,50 @@ class FaceDoodleWindow(QMainWindow):
 
         tb_layout.addSpacing(8)
 
+        # 间距
+        spacing_label = QLabel("间距:")
+        spacing_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        tb_layout.addWidget(spacing_label)
+
+        self._draw_spacing_slider = QSlider(Qt.Horizontal)
+        self._draw_spacing_slider.setRange(3, 200)
+        self._draw_spacing_slider.setValue(30)
+        self._draw_spacing_slider.setFixedWidth(80)
+        self._draw_spacing_slider.setStyleSheet(
+            "QSlider::groove:horizontal { background: #ddd; height: 4px; }"
+            "QSlider::handle:horizontal { background: #e11d48; width: 12px; margin: -4px 0; }"
+        )
+        self._draw_spacing_slider.valueChanged.connect(self._on_draw_spacing_changed)
+        tb_layout.addWidget(self._draw_spacing_slider)
+
+        self._spacing_value_label = QLabel("0.30")
+        self._spacing_value_label.setStyleSheet("color: #666; font-size: 11px; background: transparent; border: none; min-width: 28px;")
+        tb_layout.addWidget(self._spacing_value_label)
+
+        tb_layout.addSpacing(8)
+
+        # 散射
+        scatter_label = QLabel("散射:")
+        scatter_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        tb_layout.addWidget(scatter_label)
+
+        self._draw_scatter_slider = QSlider(Qt.Horizontal)
+        self._draw_scatter_slider.setRange(0, 30)
+        self._draw_scatter_slider.setValue(0)
+        self._draw_scatter_slider.setFixedWidth(80)
+        self._draw_scatter_slider.setStyleSheet(
+            "QSlider::groove:horizontal { background: #ddd; height: 4px; }"
+            "QSlider::handle:horizontal { background: #e11d48; width: 12px; margin: -4px 0; }"
+        )
+        self._draw_scatter_slider.valueChanged.connect(self._on_draw_scatter_changed)
+        tb_layout.addWidget(self._draw_scatter_slider)
+
+        self._scatter_value_label = QLabel("0")
+        self._scatter_value_label.setStyleSheet("color: #666; font-size: 11px; background: transparent; border: none; min-width: 20px;")
+        tb_layout.addWidget(self._scatter_value_label)
+
+        tb_layout.addSpacing(8)
+
         # 颜色预设
         color_label = QLabel("颜色:")
         color_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
@@ -338,6 +412,39 @@ class FaceDoodleWindow(QMainWindow):
             )
             btn.clicked.connect(lambda checked, c=bgra: self._on_draw_color_clicked(c))
             tb_layout.addWidget(btn)
+
+        tb_layout.addSpacing(8)
+
+        # 笔刷类型
+        brush_label = QLabel("笔刷:")
+        brush_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        tb_layout.addWidget(brush_label)
+
+        self._draw_brush_combo = QComboBox()
+        self._draw_brush_combo.setStyleSheet(
+            "QComboBox { background: #fff; border: 1px solid #ddd; padding: 4px 8px; font-size: 13px; color: #333; }"
+        )
+        brushes = load_brush_config()
+        for b in brushes:
+            self._draw_brush_combo.addItem(b["name"], b["id"])
+        self._draw_brush_combo.currentIndexChanged.connect(self._on_draw_brush_type_changed)
+        tb_layout.addWidget(self._draw_brush_combo)
+
+        tb_layout.addSpacing(8)
+
+        # 压感模式
+        pressure_label = QLabel("压感:")
+        pressure_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        tb_layout.addWidget(pressure_label)
+
+        self._draw_pressure_combo = QComboBox()
+        self._draw_pressure_combo.setStyleSheet(
+            "QComboBox { background: #fff; border: 1px solid #ddd; padding: 4px 8px; font-size: 13px; color: #333; }"
+        )
+        for label, mode in [("大小+浓度", "both"), ("仅大小", "size"), ("仅浓度", "opacity"), ("无压感", "none")]:
+            self._draw_pressure_combo.addItem(label, mode)
+        self._draw_pressure_combo.currentIndexChanged.connect(self._on_draw_pressure_mode_changed)
+        tb_layout.addWidget(self._draw_pressure_combo)
 
         tb_layout.addSpacing(8)
 
@@ -388,12 +495,35 @@ class FaceDoodleWindow(QMainWindow):
 
     # ── 画廊管理 ──
 
+    def _on_filter_changed(self, key):
+        self._gallery_filter = key
+        for k, btn in self._filter_btns.items():
+            btn.setChecked(k == key)
+        self._load_gallery()
+
     def _load_gallery(self):
         self.gallery.clear_cards()
         self._gallery_items.clear()
+        self._template_cards.clear()
+
+        if self._gallery_filter == "templates":
+            templates = load_templates()
+            for t in templates:
+                tid = t["id"]
+                card = ThumbnailCard(tid, t["thumb"], t["name"], False)
+                card.clicked.connect(self._on_template_click)
+                card.set_selected(tid == self._current_sticker_id)
+                card.set_active(tid == self._active_sticker_id)
+                self.gallery.add_card(card)
+                self._template_cards[tid] = card
+            self._update_gallery_info()
+            return
+
         stickers = storage.load_gallery()
         for s in stickers:
             sid = s["id"]
+            if self._gallery_filter == "favorites" and not s.get("favorite", False):
+                continue
             thumb = storage.get_sticker_thumb(sid)
             card = ThumbnailCard(sid, thumb, s.get("prompt", ""), s.get("favorite", False))
             card.clicked.connect(self._on_gallery_click)
@@ -404,20 +534,49 @@ class FaceDoodleWindow(QMainWindow):
         self._update_gallery_info()
 
     def _update_gallery_info(self):
-        n = len(self._gallery_items)
-        if n == 0:
-            self.sticker_count_label.setText("还没有贴纸，输入描述来生成第一枚吧")
-            self.gallery.show_placeholder(True)
+        if self._gallery_filter == "templates":
+            n = len(self._template_cards)
+            label = f"共 {n} 个模板" if n else "暂无模板"
+        elif self._gallery_filter == "favorites":
+            n = len(self._gallery_items)
+            label = f"共 {n} 个收藏" if n else "暂无收藏贴纸"
         else:
-            self.sticker_count_label.setText(f"共 {n} 枚贴纸")
-            self.gallery.show_placeholder(False)
+            n = len(self._gallery_items)
+            if n == 0:
+                label = "还没有贴纸，输入描述来生成第一枚吧"
+            else:
+                label = f"共 {n} 枚贴纸"
+        self.sticker_count_label.setText(label)
+        self.gallery.show_placeholder(len(self._gallery_items) == 0 and len(self._template_cards) == 0)
+
+    def _on_template_click(self, template_id):
+        if self._active_sticker_id == template_id:
+            self._active_sticker_id = None
+            self._current_sticker_id = None
+            for card in self._template_cards.values():
+                card.set_selected(False)
+                card.set_active(False)
+            self.gallery_queue.put({"action": "load_sticker", "sticker_id": None})
+        else:
+            self._current_sticker_id = template_id
+            self._active_sticker_id = template_id
+            for tid, card in self._template_cards.items():
+                card.set_selected(tid == template_id)
+                card.set_active(tid == template_id)
+            templates = load_templates()
+            for t in templates:
+                if t["id"] == template_id:
+                    self.gallery_queue.put({"action": "load_template", "template": t})
+                    break
 
     def _on_gallery_click(self, sticker_id):
         if self._active_sticker_id == sticker_id:
-            # 再次点击已活跃的贴纸 → 取消使用
             self._active_sticker_id = None
             self._current_sticker_id = None
             for card in self._gallery_items.values():
+                card.set_selected(False)
+                card.set_active(False)
+            for card in self._template_cards.values():
                 card.set_selected(False)
                 card.set_active(False)
             self.gallery_queue.put({"action": "load_sticker", "sticker_id": None})
@@ -427,6 +586,9 @@ class FaceDoodleWindow(QMainWindow):
             for sid, card in self._gallery_items.items():
                 card.set_selected(sid == sticker_id)
                 card.set_active(sid == sticker_id)
+            for tid, card in self._template_cards.items():
+                card.set_selected(tid == sticker_id)
+                card.set_active(tid == sticker_id)
             self.gallery_queue.put({"action": "load_sticker", "sticker_id": sticker_id})
 
     def _on_sticker_saved(self, sticker_id):
@@ -606,15 +768,31 @@ class FaceDoodleWindow(QMainWindow):
                     return True
             elif self._face_draw_mode:
                 t = event.type()
-                if t == QEvent.MouseButtonPress:
-                    self._on_draw_mouse_press(event)
+                if t == QEvent.TabletPress:
+                    self._tablet_in_use = True
+                    self._handle_draw_press(event.pos(), event.pressure())
                     return True
-                elif t == QEvent.MouseMove:
-                    self._on_draw_mouse_move(event)
+                elif t == QEvent.TabletMove and self._tablet_in_use:
+                    if event.pressure() > 0:
+                        self._handle_draw_move(event.pos(), event.pressure())
+                    else:
+                        self._handle_draw_release()
+                        self._tablet_in_use = False
                     return True
-                elif t == QEvent.MouseButtonRelease:
-                    self._on_draw_mouse_release(event)
+                elif t == QEvent.TabletRelease:
+                    self._handle_draw_release()
+                    self._tablet_in_use = False
                     return True
+                elif not self._tablet_in_use:
+                    if t == QEvent.MouseButtonPress:
+                        self._on_draw_mouse_press(event)
+                        return True
+                    elif t == QEvent.MouseMove:
+                        self._on_draw_mouse_move(event)
+                        return True
+                    elif t == QEvent.MouseButtonRelease:
+                        self._on_draw_mouse_release(event)
+                        return True
         return super().eventFilter(obj, event)
 
     def _on_mouse_press(self, event):
@@ -680,6 +858,28 @@ class FaceDoodleWindow(QMainWindow):
         fy = (label_pos.y() - self._label_offset_y) / self._label_scale
         return fx, fy
 
+    # ── shared draw handlers (used by both mouse and tablet) ──
+
+    def _handle_draw_press(self, pos, pressure):
+        fx, fy = self._label_point_to_frame(pos)
+        self._face_draw_mouse_down = True
+        self._face_draw_stroke_points = [(fx, fy)]
+        self.draw_queue.put({"action": "stroke_begin"})
+        self.draw_queue.put({"action": "stroke_point", "point": (fx, fy), "pressure": pressure})
+
+    def _handle_draw_move(self, pos, pressure):
+        if not self._face_draw_mouse_down:
+            return
+        fx, fy = self._label_point_to_frame(pos)
+        self._face_draw_stroke_points.append((fx, fy))
+        self.draw_queue.put({"action": "stroke_point", "point": (fx, fy), "pressure": pressure})
+
+    def _handle_draw_release(self):
+        if self._face_draw_mouse_down:
+            self._face_draw_mouse_down = False
+            self._face_draw_stroke_points = []
+            self.draw_queue.put({"action": "stroke_end"})
+
     def _on_draw_mouse_press(self, event):
         if event.button() == Qt.LeftButton:
             self._face_draw_mouse_down = True
@@ -732,6 +932,27 @@ class FaceDoodleWindow(QMainWindow):
 
     def _on_draw_save(self):
         self.draw_queue.put({"action": "save"})
+
+    def _on_draw_brush_type_changed(self, idx):
+        brush_id = self._draw_brush_combo.currentData()
+        if brush_id:
+            self._face_draw_brush_type = brush_id
+            self.draw_queue.put({"action": "set_brush_type", "brush_id": brush_id})
+
+    def _on_draw_pressure_mode_changed(self, idx):
+        mode = self._draw_pressure_combo.currentData()
+        if mode:
+            self._face_draw_pressure_mode = mode
+            self.draw_queue.put({"action": "set_pressure_mode", "mode": mode})
+
+    def _on_draw_spacing_changed(self, value):
+        coef = value / 100.0
+        self._spacing_value_label.setText(f"{coef:.2f}")
+        self.draw_queue.put({"action": "set_spacing", "coef": coef})
+
+    def _on_draw_scatter_changed(self, value):
+        self._scatter_value_label.setText(str(value))
+        self.draw_queue.put({"action": "set_scatter", "px": float(value)})
 
     def _on_draw_quick_brush(self):
         self._face_draw_eraser = False

@@ -293,7 +293,32 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                     gmsg = gallery_queue.get(block=False)
                 except Exception:
                     break
-                if gmsg.get("action") == "load_sticker":
+                if gmsg.get("action") == "load_template":
+                    t = gmsg.get("template")
+                    if t and t.get("image") is not None:
+                        old_sid = active_content.get("sticker_id") if active_content else None
+                        if old_sid:
+                            saved = dict(adjustment)
+                            _sticker_adjustments[old_sid] = saved
+                            storage.save_sticker_adjustments(old_sid, saved)
+                        active_content = {
+                            "sticker": t["image"],
+                            "location": t.get("region", "forehead_top"),
+                            "scale": 1.0,
+                            "sticker_id": t["id"],
+                            "prompt": t.get("name", "模板"),
+                        }
+                        adjustment["offset_x"] = 0.0
+                        adjustment["offset_y"] = 0.0
+                        adjustment["rotation"] = 0.0
+                        adjustment["scale_mult"] = 1.0
+                    else:
+                        active_content = None
+                        adjustment["offset_x"] = 0.0
+                        adjustment["offset_y"] = 0.0
+                        adjustment["rotation"] = 0.0
+                        adjustment["scale_mult"] = 1.0
+                elif gmsg.get("action") == "load_sticker":
                     sid = gmsg.get("sticker_id")
                     # 保存当前贴纸的调整状态
                     old_sid = active_content.get("sticker_id") if active_content else None
@@ -349,6 +374,14 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                     face_canvas.set_brush_color(msg.get("brush_color", (0, 0, 0, 255)))
                 elif action == "toggle_eraser":
                     face_canvas.set_eraser_mode(msg.get("eraser_mode", True))
+                elif action == "set_brush_type":
+                    face_canvas.set_brush_type(msg.get("brush_id", "hard_round"))
+                elif action == "set_pressure_mode":
+                    face_canvas.set_pressure_mode(msg.get("mode", "both"))
+                elif action == "set_spacing":
+                    face_canvas.set_spacing(msg.get("coef", 0.3))
+                elif action == "set_scatter":
+                    face_canvas.set_scatter(msg.get("px", 0.0))
                 elif action == "undo":
                     face_canvas.undo()
                 elif action == "clear":
@@ -362,6 +395,7 @@ def consumer(in_queue, display_queue, command_queue, adjustment_queue, gallery_q
                 elif action == "stroke_point" and face_draw_active:
                     pt = msg.get("point")
                     if pt is not None:
+                        face_canvas.set_pressure(msg.get("pressure", 1.0))
                         face_canvas.add_stroke_point(pt)
 
                 elif action == "stroke_end":

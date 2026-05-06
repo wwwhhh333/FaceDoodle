@@ -1,0 +1,31 @@
+{
+  "brushes": [
+    {
+      "id": "hard_round",
+      "name": "硬圆笔",
+      "tip": "hard_round.png",
+      "spacing": 0.3,
+      "pressure_size": true,
+      "pressure_opacity": false,
+      "scatter": 0.0
+    },
+    {
+      "id": "soft_round",
+      "name": "软圆笔",
+      "tip": "soft_round.png",
+      "spacing": 0.25,
+      "pressure_size": true,
+      "pressure_opacity": true,
+      "scatter": 0.0
+    },
+    {
+      "id": "star_scatter",
+      "name": "星",
+      "tip": "星.png",
+      "spacing": 1,
+      "pressure_size": true,
+      "pressure_opacity": true,
+      "scatter": 0.0
+    }
+  ]
+}

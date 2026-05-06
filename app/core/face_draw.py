@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 
+from app.core.brush import (load_brush_config, get_brush_by_id, load_brush_tip,
+                            stamp_brush, stamp_line, PRESSURE_MIN_RATIO)
+
 CANVAS_SIZE = 512
 MAX_UNDO = 20
 
@@ -12,9 +15,21 @@ class FaceDrawCanvas:
         self._brush_size = 12
         self._brush_color = (0, 0, 0, 255)
         self._eraser_mode = False
-        self._prev_canvas_pt = None     # 当前 stroke 的上一个画布坐标
-        self._M_inv = None              # 当前 stroke 的逆透视矩阵
+        self._prev_canvas_pt = None
+        self._M_inv = None
         self._stroke_undo_pushed = False
+
+        brushes = load_brush_config()
+        default = brushes[0] if brushes else None
+        self._brush_type = default["id"] if default else "hard_round"
+        self._brush_config = default
+        self._brush_tip = None
+        self._pressure = 1.0
+        self._pressure_mode = "both"
+        self._spacing_override = None
+        self._scatter_override = None
+
+        self._rebuild_tip()
 
     @property
     def canvas(self):
@@ -26,12 +41,33 @@ class FaceDrawCanvas:
 
     def set_brush_size(self, size):
         self._brush_size = max(1, min(50, int(size)))
+        self._rebuild_tip()
 
     def set_brush_color(self, bgra):
         self._brush_color = tuple(bgra)
 
     def set_eraser_mode(self, on):
         self._eraser_mode = bool(on)
+
+    def set_brush_type(self, brush_id):
+        cfg = get_brush_by_id(brush_id)
+        if cfg is None:
+            return
+        self._brush_type = brush_id
+        self._brush_config = cfg
+        self._rebuild_tip()
+
+    def set_pressure(self, p):
+        self._pressure = max(0.0, min(1.0, float(p)))
+
+    def set_pressure_mode(self, mode):
+        self._pressure_mode = mode
+
+    def set_spacing(self, coef):
+        self._spacing_override = max(0.03, min(2.0, float(coef)))
+
+    def set_scatter(self, px):
+        self._scatter_override = max(0.0, min(30.0, float(px)))
 
     def clear(self):
         self._push_undo()
@@ -41,12 +77,39 @@ class FaceDrawCanvas:
         if self._undo_stack:
             self._canvas = self._undo_stack.pop()
 
+    # ── internal ──
+
     def _push_undo(self):
         self._undo_stack.append(self._canvas.copy())
         if len(self._undo_stack) > MAX_UNDO:
             self._undo_stack.pop(0)
 
-    # ── 增量 stroke API ──
+    def _rebuild_tip(self):
+        cfg = self._brush_config
+        tip_file = cfg["tip"] if cfg else "hard_round.png"
+        size = self._effective_size()
+        tip = load_brush_tip(tip_file, size)
+        if tip is None and tip_file != "hard_round.png":
+            tip = load_brush_tip("hard_round.png", size)
+        self._brush_tip = tip
+
+    def _effective_size(self):
+        size_scale, _ = self._pressure_scales()
+        return max(1, int(self._brush_size * size_scale))
+
+    def _pressure_scales(self):
+        p = self._pressure
+        if self._pressure_mode == "none":
+            return 1.0, 1.0
+        elif self._pressure_mode == "size":
+            return PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p, 1.0
+        elif self._pressure_mode == "opacity":
+            return 1.0, PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p
+        else:
+            s = PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p
+            return s, s
+
+    # ── incremental stroke API ──
 
     def begin_stroke(self, face_quad):
         self._push_undo()
@@ -58,18 +121,29 @@ class FaceDrawCanvas:
         self._M_inv = cv2.getPerspectiveTransform(face_quad.astype(np.float32), canvas_corners)
         self._prev_canvas_pt = None
 
-    def add_stroke_segment(self, p1, p2):
-        """绘制从 p1 到 p2 的线段 (帧坐标)，实时追加到画布"""
+    def add_stroke_point(self, pt):
         if self._M_inv is None:
             return
-        color = (0, 0, 0, 0) if self._eraser_mode else self._brush_color
+        cc = self._frame_to_canvas(pt)
+        if self._prev_canvas_pt is not None:
+            self._draw_segment(self._prev_canvas_pt, cc)
+        else:
+            # First point: single stamp at position
+            self._ensure_tip()
+            _, opacity_scale = self._pressure_scales()
+            stamp_brush(self._canvas, cc[0], cc[1], self._brush_tip,
+                        self._brush_color, opacity_scale, eraser=self._eraser_mode)
+        self._prev_canvas_pt = cc
+
+    def add_stroke_segment(self, p1, p2):
+        """Draw segment from p1 to p2 (frame coords), for batch usage."""
+        if self._M_inv is None:
+            return
         c1 = self._frame_to_canvas(p1)
         c2 = self._frame_to_canvas(p2)
-        # 从上一个点连到 c1（保证接续）
         if self._prev_canvas_pt is not None:
-            cv2.line(self._canvas, self._prev_canvas_pt, c1, color, self._brush_size, cv2.LINE_AA)
-        cv2.line(self._canvas, c1, c2, color, self._brush_size, cv2.LINE_AA)
-        cv2.circle(self._canvas, c2, self._brush_size // 2, color, -1, cv2.LINE_AA)
+            self._draw_segment(self._prev_canvas_pt, c1)
+        self._draw_segment(c1, c2)
         self._prev_canvas_pt = c2
 
     def end_stroke(self):
@@ -77,18 +151,31 @@ class FaceDrawCanvas:
         self._prev_canvas_pt = None
         self._stroke_undo_pushed = False
 
-    def add_stroke_point(self, pt):
-        """添加单个帧坐标点，连接到上一个点"""
-        if self._M_inv is None:
-            return
-        color = (0, 0, 0, 0) if self._eraser_mode else self._brush_color
-        cc = self._frame_to_canvas(pt)
-        if self._prev_canvas_pt is not None:
-            cv2.line(self._canvas, self._prev_canvas_pt, cc, color, self._brush_size, cv2.LINE_AA)
-        cv2.circle(self._canvas, cc, self._brush_size // 2, color, -1, cv2.LINE_AA)
-        self._prev_canvas_pt = cc
+    def _ensure_tip(self):
+        eff_size = self._effective_size()
+        if self._brush_tip is None or self._brush_tip.shape[0] != eff_size * 2 + 1:
+            self._rebuild_tip()
 
-    # ── 坐标映射 ──
+    def _draw_segment(self, c1, c2):
+        cfg = self._brush_config
+        spacing_coef = (self._spacing_override if self._spacing_override is not None
+                        else (cfg.get("spacing", 0.3) if cfg else 0.3))
+        scatter_coef = (self._scatter_override if self._scatter_override is not None
+                        else (cfg.get("scatter", 0.0) if cfg else 0.0))
+
+        eff_size = self._effective_size()
+        spacing_px = max(1.0, eff_size * spacing_coef)
+        scatter_px = scatter_coef * eff_size
+
+        _, opacity_scale = self._pressure_scales()
+
+        self._ensure_tip()
+
+        stamp_line(self._canvas, c1, c2, self._brush_tip,
+                   self._brush_color, opacity_scale, spacing_px, scatter=scatter_px,
+                   eraser=self._eraser_mode)
+
+    # ── coordinate mapping ──
 
     def _frame_to_canvas(self, pt):
         src = np.array([[[pt[0], pt[1]]]], dtype=np.float32)

@@ -3,11 +3,14 @@ from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit, QPushButton, QScrollAre
                              QComboBox, QDialog, QGridLayout)
 from PyQt5.QtGui import (QPixmap, QImage, QPainter, QColor,
                          QPen, QMouseEvent)
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QPoint, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QPoint, QTimer, QEvent
 import numpy as np
 import cv2
 import os
 import subprocess
+
+from app.core.brush import (load_brush_config, get_brush_by_id, load_brush_tip,
+                            stamp_brush, stamp_line, PRESSURE_MIN_RATIO)
 
 
 def _bgra_to_qpixmap(bgra):
@@ -53,6 +56,11 @@ class ThumbnailCard(QWidget):
                     pix.scaled(92, 92, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 )
         layout.addWidget(self.thumb_label, alignment=Qt.AlignCenter)
+
+        self.fav_star = QLabel("★", self)
+        self.fav_star.setStyleSheet("color: #f59e0b; font-size: 14px; background: transparent; border: none;")
+        self.fav_star.setVisible(self._fav)
+        self.fav_star.move(78, 2)
 
         label_text = prompt[:10] + ".." if len(prompt) > 10 else prompt
         self.name_label = QLabel(label_text)
@@ -228,11 +236,25 @@ class DrawingCanvas(QWidget):
         self._brush_size = 12
         self._brush_color = (0, 0, 0, 255)
         self._eraser_mode = False
+
+        brushes = load_brush_config()
+        default = brushes[0] if brushes else None
+        self._brush_type = default["id"] if default else "hard_round"
+        self._brush_config = default
+        self._brush_tip = None
+        self._pressure = 1.0
+        self._pressure_mode = "both"
+        self._spacing_override = None
+        self._scatter_override = None
+        self._rebuild_tip()
+
         self._mirror_mode = False
         self._last_pos = None
         self._drawing_active = False
+        self._tablet_in_use = False
 
         self._checker = self._make_checkerboard()
+        self.setTabletTracking(True)
 
     def _make_checkerboard(self):
         grid = 8
@@ -276,6 +298,7 @@ class DrawingCanvas(QWidget):
 
     def set_brush_size(self, size):
         self._brush_size = max(1, min(50, size))
+        self._rebuild_tip()
 
     def set_brush_color(self, color):
         self._brush_color = color
@@ -283,6 +306,51 @@ class DrawingCanvas(QWidget):
 
     def set_eraser_mode(self, on):
         self._eraser_mode = on
+
+    def set_brush_type(self, brush_id):
+        cfg = get_brush_by_id(brush_id)
+        if cfg is None:
+            return
+        self._brush_type = brush_id
+        self._brush_config = cfg
+        self._rebuild_tip()
+
+    def set_pressure(self, p):
+        self._pressure = max(0.0, min(1.0, float(p)))
+
+    def set_pressure_mode(self, mode):
+        self._pressure_mode = mode
+
+    def set_spacing(self, coef):
+        self._spacing_override = max(0.03, min(2.0, float(coef)))
+
+    def set_scatter(self, px):
+        self._scatter_override = max(0.0, min(30.0, float(px)))
+
+    def _rebuild_tip(self):
+        cfg = self._brush_config
+        tip_file = cfg["tip"] if cfg else "hard_round.png"
+        size = self._effective_size()
+        tip = load_brush_tip(tip_file, size)
+        if tip is None and tip_file != "hard_round.png":
+            tip = load_brush_tip("hard_round.png", size)
+        self._brush_tip = tip
+
+    def _effective_size(self):
+        size_scale, _ = self._pressure_scales()
+        return max(1, int(self._brush_size * size_scale))
+
+    def _pressure_scales(self):
+        p = self._pressure
+        if self._pressure_mode == "none":
+            return 1.0, 1.0
+        elif self._pressure_mode == "size":
+            return PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p, 1.0
+        elif self._pressure_mode == "opacity":
+            return 1.0, PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p
+        else:
+            s = PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p
+            return s, s
 
     def set_mirror_mode(self, on):
         self._mirror_mode = on
@@ -335,15 +403,33 @@ class DrawingCanvas(QWidget):
         self._draw_stroke_at(p1.x(), p1.y(), p2.x(), p2.y(), color)
 
     def _draw_stroke_at(self, x1, y1, x2, y2, color):
-        cv2.line(self._drawing, (x1, y1), (x2, y2), color, self._brush_size, cv2.LINE_AA)
-        cv2.circle(self._drawing, (x2, y2), self._brush_size // 2, color, -1, cv2.LINE_AA)
+        cfg = self._brush_config
+        spacing_coef = (self._spacing_override if self._spacing_override is not None
+                        else (cfg.get("spacing", 0.3) if cfg else 0.3))
+        scatter_coef = (self._scatter_override if self._scatter_override is not None
+                        else (cfg.get("scatter", 0.0) if cfg else 0.0))
+
+        eff_size = self._effective_size()
+        spacing_px = max(1.0, eff_size * spacing_coef)
+        scatter_px = scatter_coef * eff_size
+
+        _, opacity_scale = self._pressure_scales()
+
+        if self._brush_tip is None or self._brush_tip.shape[0] != eff_size * 2 + 1:
+            self._rebuild_tip()
+
+        stamp_line(self._drawing, (x1, y1), (x2, y2), self._brush_tip,
+                   color, opacity_scale, spacing_px, scatter=scatter_px,
+                   eraser=self._eraser_mode)
+
         if self._mirror_mode:
             mx1, mx2 = self._mirror_x(x1), self._mirror_x(x2)
-            cv2.line(self._drawing, (mx1, y1), (mx2, y2), color, self._brush_size, cv2.LINE_AA)
-            cv2.circle(self._drawing, (mx2, y2), self._brush_size // 2, color, -1, cv2.LINE_AA)
+            stamp_line(self._drawing, (mx1, y1), (mx2, y2), self._brush_tip,
+                       color, opacity_scale, spacing_px, scatter=scatter_px,
+                       eraser=self._eraser_mode)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and not self._tablet_in_use:
             self._push_undo()
             self._drawing_active = True
             self._last_pos = event.pos()
@@ -351,15 +437,45 @@ class DrawingCanvas(QWidget):
             self.update()
 
     def mouseMoveEvent(self, event):
-        if self._drawing_active and self._last_pos is not None:
+        if self._drawing_active and self._last_pos is not None and not self._tablet_in_use:
             self._draw_stroke(self._last_pos, event.pos())
             self._last_pos = event.pos()
             self.update()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.LeftButton and not self._tablet_in_use:
             self._drawing_active = False
             self._last_pos = None
+
+    def tabletEvent(self, event):
+        t = event.type()
+        if t == QEvent.TabletPress:
+            self._tablet_in_use = True
+            self.set_pressure(event.pressure())
+            self._push_undo()
+            self._drawing_active = True
+            self._last_pos = event.pos()
+            self._draw_stroke(event.pos(), event.pos())
+            self.update()
+            event.accept()
+        elif t == QEvent.TabletMove and self._tablet_in_use:
+            self.set_pressure(event.pressure())
+            if event.pressure() > 0 and self._drawing_active and self._last_pos is not None:
+                self._draw_stroke(self._last_pos, event.pos())
+                self._last_pos = event.pos()
+                self.update()
+            elif event.pressure() == 0:
+                self._drawing_active = False
+                self._last_pos = None
+                self._tablet_in_use = False
+            event.accept()
+        elif t == QEvent.TabletRelease:
+            self._drawing_active = False
+            self._last_pos = None
+            self._tablet_in_use = False
+            event.accept()
+        else:
+            super().tabletEvent(event)
 
 
 class DrawingDialog(QDialog):
@@ -368,10 +484,10 @@ class DrawingDialog(QDialog):
         self.gallery_queue = gallery_queue
         self.command_queue = command_queue
         self.setWindowTitle("绘制贴纸")
-        self.setFixedSize(660, 780)
+        self.setFixedSize(1100, 720)
         self.setStyleSheet("""
             QDialog { background: #f5f5f8; }
-            QLabel { color: #444; font-size: 14px; }
+            QLabel { color: #444; font-size: 13px; }
             QSlider::groove:horizontal {
                 background: #ddd; height: 6px;
             }
@@ -381,47 +497,223 @@ class DrawingDialog(QDialog):
             }
             QComboBox {
                 background: #fff; color: #333; border: 2px solid #ddd;
-                padding: 6px 12px; font-size: 14px;
+                padding: 5px 8px; font-size: 13px;
             }
             QComboBox::drop-down { border: none; }
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 14, 20, 14)
-        layout.setSpacing(12)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(14, 12, 14, 12)
+        root_layout.setSpacing(8)
 
-        # 画布
+        # ── 主体：左侧工具栏 + 画布 + 右侧属性栏 ──
+        body_row = QHBoxLayout()
+        body_row.setSpacing(10)
+
+        # 画布 (先创建, 以便侧边栏按钮可以引用)
         self.canvas = DrawingCanvas()
         if initial_sticker is not None:
             self.canvas.load_image(initial_sticker)
-        canvas_container = QWidget()
-        canvas_container.setStyleSheet("background: #fff; padding: 8px;")
-        canvas_layout = QVBoxLayout(canvas_container)
-        canvas_layout.addWidget(self.canvas, alignment=Qt.AlignCenter)
-        layout.addWidget(canvas_container, alignment=Qt.AlignCenter)
 
-        # 笔刷大小
+        # ── 左侧工具栏 ──
+        left_sidebar = QWidget()
+        left_sidebar.setFixedWidth(150)
+        left_sidebar.setStyleSheet("background: #fff; border: 1px solid #eee;")
+        left_layout = QVBoxLayout(left_sidebar)
+        left_layout.setContentsMargins(8, 10, 8, 10)
+        left_layout.setSpacing(6)
+
+        draw_tools_label = QLabel("绘制")
+        draw_tools_label.setStyleSheet("color: #999; font-size: 11px; background: transparent; border: none;")
+        left_layout.addWidget(draw_tools_label)
+
+        self.brush_btn = QPushButton("画笔")
+        self.brush_btn.setCursor(Qt.PointingHandCursor)
+        self.brush_btn.setStyleSheet(
+            "QPushButton { background: #667eea; color: white; border: none; padding: 10px 0; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #818cf8; }"
+        )
+        self.brush_btn.clicked.connect(self._set_brush_mode)
+        left_layout.addWidget(self.brush_btn)
+
+        self.eraser_btn = QPushButton("橡皮")
+        self.eraser_btn.setCursor(Qt.PointingHandCursor)
+        self.eraser_btn.setStyleSheet(
+            "QPushButton { background: #94a3b8; color: white; border: none; padding: 10px 0; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #b0bec5; }"
+        )
+        self.eraser_btn.clicked.connect(self._set_eraser_mode)
+        left_layout.addWidget(self.eraser_btn)
+
+        sep_left1 = QWidget()
+        sep_left1.setFixedHeight(1)
+        sep_left1.setStyleSheet("background: #eee; border: none;")
+        left_layout.addWidget(sep_left1)
+
+        self.mirror_btn = QPushButton("镜像")
+        self.mirror_btn.setCheckable(True)
+        self.mirror_btn.setCursor(Qt.PointingHandCursor)
+        self.mirror_btn.setStyleSheet(
+            "QPushButton { background: #8b5cf6; color: white; border: none; padding: 10px 0; font-size: 13px; font-weight: bold; }"
+            "QPushButton:checked { background: #7c3aed; }"
+            "QPushButton:hover { background: #a78bfa; }"
+        )
+        self.mirror_btn.clicked.connect(self._toggle_mirror)
+        left_layout.addWidget(self.mirror_btn)
+
+        sep_left2 = QWidget()
+        sep_left2.setFixedHeight(1)
+        sep_left2.setStyleSheet("background: #eee; border: none;")
+        left_layout.addWidget(sep_left2)
+
+        undo_label = QLabel("历史")
+        undo_label.setStyleSheet("color: #999; font-size: 11px; background: transparent; border: none;")
+        left_layout.addWidget(undo_label)
+
+        undo_btn = QPushButton("撤销")
+        undo_btn.setCursor(Qt.PointingHandCursor)
+        undo_btn.setStyleSheet(
+            "QPushButton { background: #f59e0b; color: white; border: none; padding: 10px 0; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #fbbf24; }"
+        )
+        undo_btn.clicked.connect(self.canvas.undo)
+        left_layout.addWidget(undo_btn)
+
+        clear_btn = QPushButton("清除")
+        clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.setStyleSheet(
+            "QPushButton { background: #ef4444; color: white; border: none; padding: 10px 0; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #f87171; }"
+        )
+        clear_btn.clicked.connect(self.canvas.clear_canvas)
+        left_layout.addWidget(clear_btn)
+
+        left_layout.addStretch()
+
+        file_label = QLabel("文件")
+        file_label.setStyleSheet("color: #999; font-size: 11px; background: transparent; border: none;")
+        left_layout.addWidget(file_label)
+
+        import_btn = QPushButton("导入")
+        import_btn.setCursor(Qt.PointingHandCursor)
+        import_btn.setStyleSheet(
+            "QPushButton { background: #06b6d4; color: white; border: none; padding: 10px 0; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #22d3ee; }"
+        )
+        import_btn.clicked.connect(self._import_image)
+        left_layout.addWidget(import_btn)
+
+        export_btn = QPushButton("导出")
+        export_btn.setCursor(Qt.PointingHandCursor)
+        export_btn.setStyleSheet(
+            "QPushButton { background: #14b8a6; color: white; border: none; padding: 10px 0; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #2dd4bf; }"
+        )
+        export_btn.clicked.connect(self._export_image)
+        left_layout.addWidget(export_btn)
+
+        self.ext_edit_btn = QPushButton("外部编辑")
+        self.ext_edit_btn.setCursor(Qt.PointingHandCursor)
+        self.ext_edit_btn.setStyleSheet(
+            "QPushButton { background: #f97316; color: white; border: none; padding: 10px 0; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #fb923c; }"
+        )
+        self.ext_edit_btn.clicked.connect(self._open_external_editor)
+        left_layout.addWidget(self.ext_edit_btn)
+
+        self._ext_watch_timer = None
+        self._ext_file_mtime = None
+        self._ext_file_path = None
+
+        body_row.addWidget(left_sidebar)
+
+        canvas_container = QWidget()
+        canvas_container.setStyleSheet("background: #fff; padding: 6px;")
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(4, 4, 4, 4)
+        canvas_layout.addWidget(self.canvas, alignment=Qt.AlignCenter)
+        body_row.addWidget(canvas_container, alignment=Qt.AlignCenter)
+
+        # ── 右侧属性栏 ──
+        right_sidebar = QWidget()
+        right_sidebar.setFixedWidth(220)
+        right_sidebar.setStyleSheet("background: #fff; border: 1px solid #eee;")
+        right_layout = QVBoxLayout(right_sidebar)
+        right_layout.setContentsMargins(10, 10, 10, 10)
+        right_layout.setSpacing(8)
+
+        # 笔刷类型
+        right_layout.addWidget(QLabel("笔刷"))
+        self.brush_type_combo = QComboBox()
+        brushes = load_brush_config()
+        for b in brushes:
+            self.brush_type_combo.addItem(b["name"], b["id"])
+        self.brush_type_combo.currentIndexChanged.connect(self._on_brush_type_changed)
+        right_layout.addWidget(self.brush_type_combo)
+
+        # 压感模式
+        right_layout.addWidget(QLabel("压感"))
+        self.pressure_mode_combo = QComboBox()
+        for label, mode in [("大小+浓度", "both"), ("仅大小", "size"),
+                             ("仅浓度", "opacity"), ("无压感", "none")]:
+            self.pressure_mode_combo.addItem(label, mode)
+        self.pressure_mode_combo.currentIndexChanged.connect(self._on_pressure_mode_changed)
+        right_layout.addWidget(self.pressure_mode_combo)
+
+        # 画笔大小
+        right_layout.addWidget(QLabel("大小"))
         size_row = QHBoxLayout()
-        size_label = QLabel("画笔大小:")
-        size_row.addWidget(size_label)
+        size_row.setSpacing(6)
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setRange(1, 50)
         self.size_slider.setValue(12)
         self.size_slider.valueChanged.connect(lambda v: self.canvas.set_brush_size(v))
-        size_row.addWidget(self.size_slider)
-        self.size_value_label = QLabel("12px")
-        self.size_slider.valueChanged.connect(lambda v: self.size_value_label.setText(f"{v}px"))
+        size_row.addWidget(self.size_slider, stretch=1)
+        self.size_value_label = QLabel("12")
+        self.size_value_label.setFixedWidth(24)
+        self.size_value_label.setStyleSheet("color: #888; font-size: 12px; background: transparent; border: none;")
+        self.size_slider.valueChanged.connect(lambda v: self.size_value_label.setText(str(v)))
         size_row.addWidget(self.size_value_label)
-        layout.addLayout(size_row)
+        right_layout.addLayout(size_row)
+
+        # 间距
+        right_layout.addWidget(QLabel("间距"))
+        spacing_row = QHBoxLayout()
+        spacing_row.setSpacing(6)
+        self.spacing_slider = QSlider(Qt.Horizontal)
+        self.spacing_slider.setRange(3, 200)
+        self.spacing_slider.setValue(30)
+        self.spacing_slider.valueChanged.connect(self._on_spacing_changed)
+        spacing_row.addWidget(self.spacing_slider, stretch=1)
+        self.spacing_value_label = QLabel("0.30")
+        self.spacing_value_label.setFixedWidth(28)
+        self.spacing_value_label.setStyleSheet("color: #888; font-size: 12px; background: transparent; border: none;")
+        spacing_row.addWidget(self.spacing_value_label)
+        right_layout.addLayout(spacing_row)
+
+        # 散射
+        right_layout.addWidget(QLabel("散射"))
+        scatter_row = QHBoxLayout()
+        scatter_row.setSpacing(6)
+        self.scatter_slider = QSlider(Qt.Horizontal)
+        self.scatter_slider.setRange(0, 30)
+        self.scatter_slider.setValue(0)
+        self.scatter_slider.valueChanged.connect(self._on_scatter_changed)
+        scatter_row.addWidget(self.scatter_slider, stretch=1)
+        self.scatter_value_label = QLabel("0")
+        self.scatter_value_label.setFixedWidth(20)
+        self.scatter_value_label.setStyleSheet("color: #888; font-size: 12px; background: transparent; border: none;")
+        scatter_row.addWidget(self.scatter_value_label)
+        right_layout.addLayout(scatter_row)
 
         # 颜色
-        color_label = QLabel("颜色:")
-        layout.addWidget(color_label)
+        right_layout.addWidget(QLabel("颜色"))
         color_grid = QGridLayout()
-        color_grid.setSpacing(4)
+        color_grid.setSpacing(3)
+        cols = 5
         for i, (name, bgra) in enumerate(PRESET_COLORS):
             btn = QPushButton()
-            btn.setFixedSize(32, 32)
+            btn.setFixedSize(26, 26)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setToolTip(name)
             r, g, b, a = bgra[2], bgra[1], bgra[0], bgra[3]
@@ -429,102 +721,73 @@ class DrawingDialog(QDialog):
                 f"background: rgba({r},{g},{b},{a}); border: 2px solid #ccc;"
             )
             btn.clicked.connect(lambda _, c=bgra: self.canvas.set_brush_color(c))
-            color_grid.addWidget(btn, 0, i)
+            color_grid.addWidget(btn, i // cols, i % cols)
 
         custom_btn = QPushButton("+")
-        custom_btn.setFixedSize(32, 32)
+        custom_btn.setFixedSize(26, 26)
         custom_btn.setCursor(Qt.PointingHandCursor)
         custom_btn.setToolTip("自定义颜色")
-        custom_btn.setStyleSheet("background: #fff; border: 2px dashed #aaa; font-size: 14px;")
+        custom_btn.setStyleSheet("background: #fff; border: 2px dashed #aaa; font-size: 13px;")
         custom_btn.clicked.connect(self._pick_custom_color)
-        color_grid.addWidget(custom_btn, 0, len(PRESET_COLORS))
-        layout.addLayout(color_grid)
+        ci = len(PRESET_COLORS)
+        color_grid.addWidget(custom_btn, ci // cols, ci % cols)
+        right_layout.addLayout(color_grid)
 
-        # 工具
-        tool_row = QHBoxLayout()
-        tool_row.setSpacing(8)
+        right_layout.addStretch()
 
-        self.brush_btn = StyledButton("画笔", "#667eea", "#818cf8")
-        self.brush_btn.clicked.connect(self._set_brush_mode)
-        tool_row.addWidget(self.brush_btn)
+        body_row.addWidget(right_sidebar)
+        root_layout.addLayout(body_row, stretch=1)
 
-        self.eraser_btn = StyledButton("橡皮", "#94a3b8", "#b0bec5")
-        self.eraser_btn.clicked.connect(self._set_eraser_mode)
-        tool_row.addWidget(self.eraser_btn)
+        # ── 底部栏：AI精炼 + 位置 + 应用 ──
+        bottom_widget = QWidget()
+        bottom_widget.setStyleSheet("background: #fff; border-top: 1px solid #eee;")
+        bottom_layout = QVBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(10, 8, 10, 6)
+        bottom_layout.setSpacing(6)
 
-        undo_btn = StyledButton("撤销", "#f59e0b", "#fbbf24")
-        undo_btn.clicked.connect(self.canvas.undo)
-        tool_row.addWidget(undo_btn)
-
-        clear_btn = StyledButton("清除画布", "#ef4444", "#f87171")
-        clear_btn.clicked.connect(self.canvas.clear_canvas)
-        tool_row.addWidget(clear_btn)
-
-        self.mirror_btn = StyledButton("镜像", "#8b5cf6", "#a78bfa")
-        self.mirror_btn.setCheckable(True)
-        self.mirror_btn.clicked.connect(self._toggle_mirror)
-        tool_row.addWidget(self.mirror_btn)
-
-        tool_row.addStretch()
-
-        import_btn = StyledButton("导入", "#06b6d4", "#22d3ee")
-        import_btn.clicked.connect(self._import_image)
-        tool_row.addWidget(import_btn)
-
-        export_btn = StyledButton("导出", "#14b8a6", "#2dd4bf")
-        export_btn.clicked.connect(self._export_image)
-        tool_row.addWidget(export_btn)
-
-        self.ext_edit_btn = StyledButton("外部编辑", "#f97316", "#fb923c")
-        self.ext_edit_btn.clicked.connect(self._open_external_editor)
-        tool_row.addWidget(self.ext_edit_btn)
-
-        self._ext_watch_timer = None
-        self._ext_file_mtime = None
-        self._ext_file_path = None
-
-        layout.addLayout(tool_row)
-
-        # 快捷键提示
-        hint_label = QLabel("快捷键: B 画笔 | E 橡皮 | M 镜像 | Ctrl+Z 撤销 | [ ] 调大小")
-        hint_label.setStyleSheet("color: #aaa; font-size: 11px; background: transparent; border: none;")
-        hint_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(hint_label)
-
-        # AI 精炼
         refine_row = QHBoxLayout()
         refine_row.setSpacing(8)
         refine_row.addWidget(QLabel("AI 精炼:"))
-
         self.refine_input = QLineEdit()
         self.refine_input.setPlaceholderText("描述风格，如：水彩画风、赛博朋克...")
         self.refine_input.returnPressed.connect(self._ai_refine)
         refine_row.addWidget(self.refine_input, stretch=1)
-
-        self.refine_btn = StyledButton("AI 精炼", "#8b5cf6", "#a78bfa")
+        self.refine_btn = QPushButton("AI 精炼")
+        self.refine_btn.setCursor(Qt.PointingHandCursor)
+        self.refine_btn.setStyleSheet(
+            "QPushButton { background: #8b5cf6; color: white; border: none; padding: 6px 14px; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { background: #a78bfa; }"
+            "QPushButton:disabled { background: #ddd; color: #999; }"
+        )
         self.refine_btn.clicked.connect(self._ai_refine)
         self.refine_btn.setEnabled(self.command_queue is not None)
         refine_row.addWidget(self.refine_btn)
+        bottom_layout.addLayout(refine_row)
 
-        layout.addLayout(refine_row)
-
-        # 位置 + 应用
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(10)
-
-        bottom_row.addWidget(QLabel("位置:"))
+        apply_row = QHBoxLayout()
+        apply_row.setSpacing(8)
+        apply_row.addWidget(QLabel("位置:"))
         self.location_combo = QComboBox()
         for label, value in REGION_OPTIONS:
             self.location_combo.addItem(label, value)
-        bottom_row.addWidget(self.location_combo)
-
-        bottom_row.addStretch()
-
-        apply_btn = StyledButton("应用到人脸", "#10b981", "#34d399")
+        apply_row.addWidget(self.location_combo)
+        apply_row.addStretch()
+        apply_btn = QPushButton("应用到人脸")
+        apply_btn.setCursor(Qt.PointingHandCursor)
+        apply_btn.setStyleSheet(
+            "QPushButton { background: #10b981; color: white; border: none; padding: 7px 18px; font-size: 13px; font-weight: bold; }"
+            "QPushButton:hover { background: #34d399; }"
+        )
         apply_btn.clicked.connect(self._apply)
-        bottom_row.addWidget(apply_btn)
+        apply_row.addWidget(apply_btn)
+        bottom_layout.addLayout(apply_row)
 
-        layout.addLayout(bottom_row)
+        hint_label = QLabel("B画笔 E橡皮 M镜像  Ctrl+Z撤销  [ ] 大小")
+        hint_label.setStyleSheet("color: #aaa; font-size: 11px; background: transparent; border: none;")
+        hint_label.setAlignment(Qt.AlignCenter)
+        bottom_layout.addWidget(hint_label)
+
+        root_layout.addWidget(bottom_widget)
 
     def _set_brush_mode(self):
         self.canvas.set_eraser_mode(False)
@@ -532,6 +795,25 @@ class DrawingDialog(QDialog):
 
     def _set_eraser_mode(self):
         self.canvas.set_eraser_mode(True)
+
+    def _on_brush_type_changed(self, idx):
+        brush_id = self.brush_type_combo.currentData()
+        if brush_id:
+            self.canvas.set_brush_type(brush_id)
+
+    def _on_pressure_mode_changed(self, idx):
+        mode = self.pressure_mode_combo.currentData()
+        if mode:
+            self.canvas.set_pressure_mode(mode)
+
+    def _on_spacing_changed(self, value):
+        coef = value / 100.0
+        self.spacing_value_label.setText(f"{coef:.2f}")
+        self.canvas.set_spacing(coef)
+
+    def _on_scatter_changed(self, value):
+        self.scatter_value_label.setText(str(value))
+        self.canvas.set_scatter(float(value))
 
     def _toggle_mirror(self):
         on = self.canvas.toggle_mirror()
