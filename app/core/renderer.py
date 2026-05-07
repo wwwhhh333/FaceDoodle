@@ -296,14 +296,14 @@ def _hsv_to_bgr(h, s=0.8, v=0.9):
     return (int(bgr[0, 0, 0]), int(bgr[0, 0, 1]), int(bgr[0, 0, 2]))
 
 
-def render_loading_progress(frame, face_data, ai_state):
-    if not ai_state.get("is_generating"):
+def render_loading_progress(frame, face_data, gen_state):
+    elapsed = gen_state.get_elapsed()
+    if elapsed <= 0:
         return frame
     if not face_data or "face_width" not in face_data:
         return frame
 
     t = time.time()
-    elapsed = t - ai_state.get("generation_start_time", t)
 
     left_cheek = face_data.get("left_cheek")
     right_cheek = face_data.get("right_cheek")

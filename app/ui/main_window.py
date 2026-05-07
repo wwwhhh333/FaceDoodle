@@ -7,11 +7,21 @@ from PyQt5.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 
 from app.ui.widgets import (ThumbnailCard, StyledButton, GradientBar,
-                            GalleryScrollArea, DrawingDialog, _bgra_to_qpixmap,
-                            ActiveStickersPanel)
+                            GalleryScrollArea, REGION_OPTIONS, PRESET_COLORS)
+from app.ui.drawing_widgets import DrawingDialog
+from app.ui.sticker_panel import ActiveStickersPanel
 from app.utils import storage
 from app.core.brush import load_brush_config
 from app.core.templates import load_templates
+from app.core.protocol import (
+    AdjMove, AdjRotate, AdjScale, AdjReset,
+    GalAddSticker, GalRemoveSticker, GalSelectEditTarget,
+    GalLoadTemplate, GalLoadSticker, GalMergeGroup,
+    DrawToggleDrawMode, DrawSetRegion, DrawSetBrush, DrawToggleEraser,
+    DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
+    DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
+    DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
+)
 
 
 class VideoUpdateThread(QThread):
@@ -32,14 +42,12 @@ class VideoUpdateThread(QThread):
                 item = self.display_queue.get(block=True, timeout=0.1)
                 if isinstance(item, np.ndarray):
                     self.change_pixmap_signal.emit(item)
-                elif isinstance(item, dict):
-                    action = item.get("action")
-                    if action == "sticker_saved":
-                        self.sticker_saved_signal.emit(item.get("sticker_id", ""))
-                    elif action == "generation_failed":
-                        self.generation_failed_signal.emit(item.get("error", "生成失败"))
-                    elif action == "active_stickers_changed":
-                        self.active_stickers_signal.emit(item)
+                elif isinstance(item, DispStickerSaved):
+                    self.sticker_saved_signal.emit(item.sticker_id)
+                elif isinstance(item, DispGenerationFailed):
+                    self.generation_failed_signal.emit(item.error)
+                elif isinstance(item, DispActiveStickersChanged):
+                    self.active_stickers_signal.emit(item)
             except Exception:
                 pass
 
@@ -163,10 +171,10 @@ class FaceDoodleWindow(QMainWindow):
 
         self.active_panel = ActiveStickersPanel()
         self.active_panel.select_edit_target.connect(
-            lambda iid: self.gallery_queue.put({"action": "select_edit_target", "instance_id": iid})
+            lambda iid: self.gallery_queue.put(GalSelectEditTarget(instance_id=iid))
         )
         self.active_panel.remove_sticker.connect(
-            lambda iid: self.gallery_queue.put({"action": "remove_sticker", "instance_id": iid})
+            lambda iid: self.gallery_queue.put(GalRemoveSticker(instance_id=iid))
         )
         lp_layout.addWidget(self.active_panel, stretch=1)
         content_row.addWidget(left_panel)
@@ -285,7 +293,7 @@ class FaceDoodleWindow(QMainWindow):
         action_layout.addWidget(self.face_draw_btn)
 
         self.reset_btn = StyledButton("重置", "#94a3b8", "#b0bec5")
-        self.reset_btn.clicked.connect(lambda: self.adjustment_queue.put({"action": "reset"}))
+        self.reset_btn.clicked.connect(lambda: self.adjustment_queue.put(AdjReset()))
         action_layout.addWidget(self.reset_btn)
 
         sep1 = QWidget()
@@ -357,7 +365,6 @@ class FaceDoodleWindow(QMainWindow):
             self._draw_tool_shortcuts.append(sc)
 
     def _init_face_draw_toolbar(self):
-        from app.ui.widgets import REGION_OPTIONS, PRESET_COLORS
 
         self.face_draw_toolbar = QWidget()
         self.face_draw_toolbar.setVisible(False)
@@ -638,10 +645,10 @@ class FaceDoodleWindow(QMainWindow):
                 templates = load_templates()
                 for t in templates:
                     if t["id"] == sid:
-                        self.gallery_queue.put({"action": "load_template", "template": t})
+                        self.gallery_queue.put(GalLoadTemplate(template=t))
                         break
             else:
-                self.gallery_queue.put({"action": "add_sticker", "sticker_id": sid})
+                self.gallery_queue.put(GalAddSticker(sticker_id=sid))
         self._gallery_selected_ids.clear()
         self._update_gallery_selection_visuals()
 
@@ -675,7 +682,7 @@ class FaceDoodleWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             storage.delete_sticker(self._current_sticker_id)
             self._current_sticker_id = None
-            self.gallery_queue.put({"action": "load_sticker", "sticker_id": None})
+            self.gallery_queue.put(GalLoadSticker(sticker_id=None))
             self._load_gallery()
 
     def _import_image(self):
@@ -691,7 +698,6 @@ class FaceDoodleWindow(QMainWindow):
             QMessageBox.warning(self, "导入失败", "无法读取该图片，请确认格式正确。")
             return
 
-        from app.ui.widgets import REGION_OPTIONS
         region, ok = self._choose_region_dialog()
         if not ok:
             return
@@ -701,11 +707,10 @@ class FaceDoodleWindow(QMainWindow):
             "location": region,
             "scale": 1.0,
         })
-        self.gallery_queue.put({"action": "load_sticker", "sticker_id": sid})
+        self.gallery_queue.put(GalLoadSticker(sticker_id=sid))
         self._load_gallery()
 
     def _choose_region_dialog(self):
-        from app.ui.widgets import REGION_OPTIONS
         dlg = QDialog(self)
         dlg.setWindowTitle("选择位置")
         dlg.setFixedSize(280, 120)
@@ -770,14 +775,13 @@ class FaceDoodleWindow(QMainWindow):
                 self._toggle_face_draw_mode()
             # Select last active sticker as edit target, or leave None
             if self._active_instance_ids:
-                self.gallery_queue.put({"action": "select_edit_target",
-                                        "instance_id": self._active_instance_ids[-1]})
+                self.gallery_queue.put(GalSelectEditTarget(instance_id=self._active_instance_ids[-1]))
             self.edit_indicator.setVisible(True)
             self._position_indicator()
             self.input_box.setEnabled(False)
             self.send_btn.setEnabled(False)
         else:
-            self.gallery_queue.put({"action": "select_edit_target", "instance_id": None})
+            self.gallery_queue.put(GalSelectEditTarget(instance_id=None))
             self.edit_indicator.setVisible(False)
             self.input_box.setEnabled(True)
             self.send_btn.setEnabled(True)
@@ -791,8 +795,8 @@ class FaceDoodleWindow(QMainWindow):
     # ── 活动贴纸状态 ──
 
     def _on_active_stickers_changed(self, data):
-        instances = data.get("instances", [])
-        edit_target_id = data.get("edit_target_id")
+        instances = data.instances
+        edit_target_id = data.edit_target_id
 
         thumbs_info = {}
         templates = load_templates()
@@ -830,10 +834,7 @@ class FaceDoodleWindow(QMainWindow):
     def _on_merge_group(self):
         if len(self._active_instance_ids) < 2:
             return
-        self.gallery_queue.put({
-            "action": "merge_group",
-            "instance_ids": list(self._active_instance_ids),
-        })
+        self.gallery_queue.put(GalMergeGroup(instance_ids=list(self._active_instance_ids)))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -912,9 +913,9 @@ class FaceDoodleWindow(QMainWindow):
         self._last_mouse_pos = event.pos()
         dx_f, dy_f = self._label_to_frame_delta(dx_px, dy_px)
         if self._mouse_button == Qt.LeftButton:
-            self.adjustment_queue.put({"action": "move", "dx": dx_f, "dy": dy_f})
+            self.adjustment_queue.put(AdjMove(dx=dx_f, dy=dy_f))
         elif self._mouse_button == Qt.RightButton:
-            self.adjustment_queue.put({"action": "rotate", "d_angle": dx_f * 0.3})
+            self.adjustment_queue.put(AdjRotate(d_angle=dx_f * 0.3))
 
     def _on_mouse_release(self, event):
         self._mouse_down = False
@@ -924,16 +925,16 @@ class FaceDoodleWindow(QMainWindow):
     def _on_wheel(self, event):
         delta = event.angleDelta().y()
         factor = 1.0 + delta * 0.0005
-        self.adjustment_queue.put({"action": "scale", "multiplier": factor})
+        self.adjustment_queue.put(AdjScale(multiplier=factor))
 
     def _on_double_click(self, event):
-        self.adjustment_queue.put({"action": "reset"})
+        self.adjustment_queue.put(AdjReset())
 
     # ── 面部绘制模式 ──
 
     def _toggle_face_draw_mode(self):
         self._face_draw_mode = not self._face_draw_mode
-        self.draw_queue.put({"action": "toggle_draw_mode"})
+        self.draw_queue.put(DrawToggleDrawMode())
         self.face_draw_btn.setChecked(self._face_draw_mode)
         self.face_draw_btn.setText("绘制中" if self._face_draw_mode else "面部绘制")
         for sc in self._draw_tool_shortcuts:
@@ -968,21 +969,21 @@ class FaceDoodleWindow(QMainWindow):
         fx, fy = self._label_point_to_frame(pos)
         self._face_draw_mouse_down = True
         self._face_draw_stroke_points = [(fx, fy)]
-        self.draw_queue.put({"action": "stroke_begin"})
-        self.draw_queue.put({"action": "stroke_point", "point": (fx, fy), "pressure": pressure})
+        self.draw_queue.put(DrawStrokeBegin())
+        self.draw_queue.put(DrawStrokePoint(point=(fx, fy), pressure=pressure))
 
     def _handle_draw_move(self, pos, pressure):
         if not self._face_draw_mouse_down:
             return
         fx, fy = self._label_point_to_frame(pos)
         self._face_draw_stroke_points.append((fx, fy))
-        self.draw_queue.put({"action": "stroke_point", "point": (fx, fy), "pressure": pressure})
+        self.draw_queue.put(DrawStrokePoint(point=(fx, fy), pressure=pressure))
 
     def _handle_draw_release(self):
         if self._face_draw_mouse_down:
             self._face_draw_mouse_down = False
             self._face_draw_stroke_points = []
-            self.draw_queue.put({"action": "stroke_end"})
+            self.draw_queue.put(DrawStrokeEnd())
 
     def _on_draw_mouse_press(self, event):
         if event.button() == Qt.LeftButton:
@@ -990,91 +991,88 @@ class FaceDoodleWindow(QMainWindow):
             self._face_draw_stroke_points = []
             fx, fy = self._label_point_to_frame(event.pos())
             self._face_draw_stroke_points.append((fx, fy))
-            self.draw_queue.put({"action": "stroke_begin"})
-            self.draw_queue.put({"action": "stroke_point", "point": (fx, fy)})
+            self.draw_queue.put(DrawStrokeBegin())
+            self.draw_queue.put(DrawStrokePoint(point=(fx, fy)))
 
     def _on_draw_mouse_move(self, event):
         if not self._face_draw_mouse_down:
             return
         fx, fy = self._label_point_to_frame(event.pos())
         self._face_draw_stroke_points.append((fx, fy))
-        self.draw_queue.put({"action": "stroke_point", "point": (fx, fy)})
+        self.draw_queue.put(DrawStrokePoint(point=(fx, fy)))
 
     def _on_draw_mouse_release(self, event):
         if event.button() == Qt.LeftButton:
             self._face_draw_mouse_down = False
             self._face_draw_stroke_points = []
-            self.draw_queue.put({"action": "stroke_end"})
+            self.draw_queue.put(DrawStrokeEnd())
 
     def _on_draw_region_changed(self, idx):
         region = self._draw_region_combo.currentData()
         self._face_draw_region = region
-        self.draw_queue.put({"action": "set_region", "region": region})
+        self.draw_queue.put(DrawSetRegion(region=region))
 
     def _on_draw_brush_size_changed(self, value):
         self._face_draw_brush_size = value
         self._brush_size_label.setText(f"{value}px")
-        self.draw_queue.put({"action": "set_brush", "brush_size": value,
-                             "brush_color": self._face_draw_brush_color})
+        self.draw_queue.put(DrawSetBrush(brush_size=value, brush_color=self._face_draw_brush_color))
 
     def _on_draw_color_clicked(self, bgra):
         self._face_draw_brush_color = bgra
         self._face_draw_eraser = False
         self._draw_eraser_btn.setChecked(False)
-        self.draw_queue.put({"action": "set_brush", "brush_color": bgra,
-                             "brush_size": self._face_draw_brush_size})
+        self.draw_queue.put(DrawSetBrush(brush_color=bgra, brush_size=self._face_draw_brush_size))
 
     def _on_draw_eraser_toggled(self, checked):
         self._face_draw_eraser = checked
-        self.draw_queue.put({"action": "toggle_eraser", "eraser_mode": checked})
+        self.draw_queue.put(DrawToggleEraser(eraser_mode=checked))
 
     def _on_draw_undo(self):
-        self.draw_queue.put({"action": "undo"})
+        self.draw_queue.put(DrawUndo())
 
     def _on_draw_clear(self):
-        self.draw_queue.put({"action": "clear"})
+        self.draw_queue.put(DrawClear())
 
     def _on_draw_save(self):
-        self.draw_queue.put({"action": "save"})
+        self.draw_queue.put(DrawSave())
 
     def _on_draw_brush_type_changed(self, idx):
         brush_id = self._draw_brush_combo.currentData()
         if brush_id:
             self._face_draw_brush_type = brush_id
-            self.draw_queue.put({"action": "set_brush_type", "brush_id": brush_id})
+            self.draw_queue.put(DrawSetBrushType(brush_id=brush_id))
 
     def _on_draw_pressure_mode_changed(self, idx):
         mode = self._draw_pressure_combo.currentData()
         if mode:
             self._face_draw_pressure_mode = mode
-            self.draw_queue.put({"action": "set_pressure_mode", "mode": mode})
+            self.draw_queue.put(DrawSetPressureMode(mode=mode))
 
     def _on_draw_spacing_changed(self, value):
         coef = value / 100.0
         self._spacing_value_label.setText(f"{coef:.2f}")
-        self.draw_queue.put({"action": "set_spacing", "coef": coef})
+        self.draw_queue.put(DrawSetSpacing(coef=coef))
 
     def _on_draw_scatter_changed(self, value):
         self._scatter_value_label.setText(str(value))
-        self.draw_queue.put({"action": "set_scatter", "px": float(value)})
+        self.draw_queue.put(DrawSetScatter(px=float(value)))
 
     def _on_draw_quick_brush(self):
         self._face_draw_eraser = False
         self._draw_eraser_btn.setChecked(False)
-        self.draw_queue.put({"action": "toggle_eraser", "eraser_mode": False})
+        self.draw_queue.put(DrawToggleEraser(eraser_mode=False))
 
     def _on_draw_quick_eraser(self):
         self._face_draw_eraser = True
         self._draw_eraser_btn.setChecked(True)
-        self.draw_queue.put({"action": "toggle_eraser", "eraser_mode": True})
+        self.draw_queue.put(DrawToggleEraser(eraser_mode=True))
 
     def _on_draw_size_delta(self, delta):
         new_size = max(1, min(50, self._face_draw_brush_size + delta))
         self._face_draw_brush_size = new_size
         self._draw_brush_slider.setValue(new_size)
         self._brush_size_label.setText(f"{new_size}px")
-        self.draw_queue.put({"action": "set_brush", "brush_size": new_size,
-                             "brush_color": self._face_draw_brush_color})
+        self.draw_queue.put(DrawSetBrush(brush_size=new_size, brush_color=self._face_draw_brush_color))
 
     # ── 命令发送 ──
 

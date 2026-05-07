@@ -33,6 +33,117 @@ DEFAULT_BRUSHES = [
 PRESSURE_MIN_RATIO = 0.2
 
 
+class BrushStateMixin:
+    """Mixin providing brush state, pressure curves, and tip management.
+
+    Shared by DrawingCanvas (Qt widget) and FaceDrawCanvas (plain object) —
+    eliminates the duplicated _pressure_scales / _effective_size / _rebuild_tip
+    that existed in both classes.
+    """
+
+    # ── initialization (call from __init__) ──
+
+    def _init_brush_state(self):
+        brushes = load_brush_config()
+        default = brushes[0] if brushes else None
+        self._brush_type = default["id"] if default else "hard_round"
+        self._brush_config = default
+        self._brush_tip = None
+        self._brush_size = 12
+        self._brush_color = (0, 0, 0, 255)
+        self._eraser_mode = False
+        self._pressure = 1.0
+        self._pressure_mode = "both"
+        self._spacing_override = None
+        self._scatter_override = None
+        self._rebuild_tip()
+
+    # ── setters ──
+
+    def set_brush_size(self, size):
+        self._brush_size = max(1, min(50, int(size)))
+        self._rebuild_tip()
+
+    def set_brush_color(self, color):
+        self._brush_color = tuple(color)
+        self._eraser_mode = False
+
+    def set_eraser_mode(self, on):
+        self._eraser_mode = bool(on)
+
+    def set_brush_type(self, brush_id):
+        cfg = get_brush_by_id(brush_id)
+        if cfg is None:
+            return
+        self._brush_type = brush_id
+        self._brush_config = cfg
+        self._rebuild_tip()
+
+    def set_pressure(self, p):
+        self._pressure = max(0.0, min(1.0, float(p)))
+
+    def set_pressure_mode(self, mode):
+        self._pressure_mode = mode
+
+    def set_spacing(self, coef):
+        self._spacing_override = max(0.03, min(2.0, float(coef)))
+
+    def set_scatter(self, px):
+        self._scatter_override = max(0.0, min(30.0, float(px)))
+
+    # ── internal: pressure → size/opacity scales ──
+
+    def _pressure_scales(self):
+        p = self._pressure
+        if self._pressure_mode == "none":
+            return 1.0, 1.0
+        if self._pressure_mode == "size":
+            return PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p, 1.0
+        if self._pressure_mode == "opacity":
+            return 1.0, PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p
+        s = PRESSURE_MIN_RATIO + (1.0 - PRESSURE_MIN_RATIO) * p
+        return s, s
+
+    def _effective_size(self):
+        size_scale, _ = self._pressure_scales()
+        return max(1, int(self._brush_size * size_scale))
+
+    # ── internal: tip cache ──
+
+    def _rebuild_tip(self):
+        cfg = self._brush_config
+        tip_file = cfg["tip"] if cfg else "hard_round.png"
+        size = self._effective_size()
+        tip = load_brush_tip(tip_file, size)
+        if tip is None and tip_file != "hard_round.png":
+            tip = load_brush_tip("hard_round.png", size)
+        self._brush_tip = tip
+
+    def _ensure_tip(self):
+        eff_size = self._effective_size()
+        if self._brush_tip is None or self._brush_tip.shape[0] != eff_size * 2 + 1:
+            self._rebuild_tip()
+
+    # ── internal: spacing / scatter resolution ──
+
+    def _resolve_spacing_scatter(self):
+        """Return (spacing_px, scatter_px, opacity_scale) from config + overrides."""
+        cfg = self._brush_config
+        spacing_coef = (
+            self._spacing_override if self._spacing_override is not None
+            else (cfg.get("spacing", 0.3) if cfg else 0.3)
+        )
+        scatter_coef = (
+            self._scatter_override if self._scatter_override is not None
+            else (cfg.get("scatter", 0.0) if cfg else 0.0)
+        )
+        eff_size = self._effective_size()
+        spacing_px = max(1.0, eff_size * spacing_coef)
+        scatter_px = scatter_coef * eff_size
+        _, opacity_scale = self._pressure_scales()
+        return spacing_px, scatter_px, opacity_scale
+
+
 def ensure_default_brushes():
     os.makedirs(BRUSH_DIR, exist_ok=True)
 
