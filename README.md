@@ -122,9 +122,7 @@ pip install -r requirement.txt
 # 3. 设置 API Key
 $env:DEEPSEEK_API_KEY = "sk-your-key-here"
 
-# 4. 启动 ComfyUI（另一个终端）
-cd path/to/ComfyUI
-python main.py
+# 4. 启动 ComfyUI
 
 # 5. 启动 FaceDoodle
 python app/main.py
