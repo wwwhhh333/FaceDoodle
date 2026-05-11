@@ -22,12 +22,13 @@ def _bgra_to_qpixmap(bgra):
 class ThumbnailCard(QWidget):
     clicked = pyqtSignal(str)  # sticker_id
 
-    def __init__(self, sticker_id, thumb_bgra, prompt, is_favorite=False, parent=None):
+    def __init__(self, sticker_id, thumb_bgra, prompt, is_favorite=False, parent=None, is_animated=False):
         super().__init__(parent)
         self.sticker_id = sticker_id
         self._selected = False
         self._active = False
         self._fav = is_favorite
+        self._animated = is_animated
         self.setFixedSize(100, 120)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -53,6 +54,11 @@ class ThumbnailCard(QWidget):
         self.fav_star.setStyleSheet("color: #f59e0b; font-size: 14px; background: transparent; border: none;")
         self.fav_star.setVisible(self._fav)
         self.fav_star.move(78, 2)
+
+        self.anim_badge = QLabel("▶", self)
+        self.anim_badge.setStyleSheet("color: #a855f7; font-size: 12px; background: transparent; border: none; font-weight: bold;")
+        self.anim_badge.setVisible(self._animated)
+        self.anim_badge.move(4, 2)
 
         label_text = prompt[:10] + ".." if len(prompt) > 10 else prompt
         self.name_label = QLabel(label_text)

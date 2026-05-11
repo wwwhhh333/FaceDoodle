@@ -6,6 +6,8 @@ import re
 
 from openai import OpenAI
 
+from app.utils.config_loader import build_positive_prompt
+
 
 # 位置映射表：将 AI 返回的关键词映射到 Renderer 能识别的面部区域
 REGION_GROUPS = {
@@ -145,7 +147,7 @@ class FaceDoodleAgent:
         scale = _estimate_scale(region, kw) if kw else 1.0
         print(f"[Agent] 使用{'关键词' if kw else '默认'} fallback: {region}, scale={scale}")
         return {
-            "positive_prompt": f"flat vector sticker of {user_input}, front view, flat lay, clean outline, solid white background, icon design",
+            "positive_prompt": build_positive_prompt(user_input),
             "target_location": region,
             "scale": scale,
             "workflow": "transparent_workflow_api.json"
@@ -180,7 +182,7 @@ class FaceDoodleAgent:
             print(f"[Agent] 解析成功: 贴纸内容->{prompt}, 区域->{region}, 缩放->{scale}")
 
             return {
-                "positive_prompt": f"flat vector sticker of {prompt}, front view, flat lay, clean outline, solid white background, icon design",
+                "positive_prompt": build_positive_prompt(prompt),
                 "target_location": region,
                 "scale": scale,
                 "workflow": "transparent_workflow_api.json"

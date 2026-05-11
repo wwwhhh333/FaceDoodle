@@ -1,16 +1,3 @@
 {
-  "spinnerTipsEnabled": false,
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "(New-Object Media.SoundPlayer 'C:\\Windows\\Media\\Windows Notify Messaging.wav').PlaySync()",
-            "shell": "powershell"
-          }
-        ]
-      }
-    ]
-  }
+  "spinnerTipsEnabled": false
 }

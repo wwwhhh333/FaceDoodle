@@ -1,0 +1,147 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "v1-5-pruned-emaonly.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  },
+  "2": {
+    "inputs": {
+      "model_name": "animatediff_lightning_4step_comfyui.safetensors",
+      "beta_schedule": "autoselect",
+      "model": ["9", 0]
+    },
+    "class_type": "ADE_AnimateDiffLoaderGen1",
+    "_meta": {
+      "title": "AnimateDiff Loader"
+    }
+  },
+  "3": {
+    "inputs": {
+      "model": ["2", 0],
+      "beta_schedule": "sqrt_linear (AnimateDiff)"
+    },
+    "class_type": "ADE_UseEvolvedSampling",
+    "_meta": {
+      "title": "Use Evolved Sampling"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": "cat ears gently fluttering in the breeze",
+      "clip": ["1", 1]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "text": "photo, realistic, 3D render, shadow, blur, noisy edges, text, watermark, low quality, jpeg artifacts, distortion, deformed",
+      "clip": ["1", 1]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative)"
+    }
+  },
+  "6": {
+    "inputs": {
+      "image": "placeholder.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "7": {
+    "inputs": {
+      "ipadapter_file": "ip-adapter-plus-face_sd15.bin"
+    },
+    "class_type": "IPAdapterModelLoader",
+    "_meta": {
+      "title": "IPAdapter Model Loader"
+    }
+  },
+  "8": {
+    "inputs": {
+      "clip_name": "SD1.5\\model.safetensors"
+    },
+    "class_type": "CLIPVisionLoader",
+    "_meta": {
+      "title": "Load CLIP Vision"
+    }
+  },
+  "9": {
+    "inputs": {
+      "ipadapter": ["7", 0],
+      "clip_vision": ["8", 0],
+      "image": ["6", 0],
+      "model": ["1", 0],
+      "weight": 0.7,
+      "noise": 0.3,
+      "weight_type": "linear",
+      "embeds_scaling": "V only",
+      "combine_embeds": "concat",
+      "start_at": 0.0,
+      "end_at": 1.0
+    },
+    "class_type": "IPAdapterAdvanced",
+    "_meta": {
+      "title": "IPAdapter Advanced"
+    }
+  },
+  "10": {
+    "inputs": {
+      "width": 512,
+      "height": 512,
+      "batch_size": 16
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "11": {
+    "inputs": {
+      "seed": 363887600207391,
+      "steps": 4,
+      "cfg": 1.5,
+      "sampler_name": "euler",
+      "scheduler": "sgm_uniform",
+      "denoise": 1.0,
+      "model": ["3", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["10", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "12": {
+    "inputs": {
+      "samples": ["11", 0],
+      "vae": ["1", 2]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "13": {
+    "inputs": {
+      "filename_prefix": "FaceDoodle/anim_sticker",
+      "images": ["12", 0]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Animated Frames"
+    }
+  }
+}

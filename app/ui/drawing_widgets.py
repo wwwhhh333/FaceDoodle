@@ -13,6 +13,7 @@ from PyQt5.QtCore import Qt, QTimer, QEvent
 
 from app.core.brush import BrushStateMixin, load_brush_config, stamp_brush, stamp_line
 from app.core.protocol import CmdImg2Img, GalLoadSticker
+from app.utils.config_loader import build_positive_prompt
 from app.ui.widgets import _bgra_to_qpixmap, PRESET_COLORS, REGION_OPTIONS
 
 
@@ -657,8 +658,7 @@ class DrawingDialog(QDialog):
         os.makedirs(temp_dir, exist_ok=True)
         temp_path = os.path.join(temp_dir, "doodle_img2img_input.png")
         cv2.imwrite(temp_path, result)
-        style_prefix = "flat vector sticker, front view, flat lay, clean outline, solid white background, icon design"
-        full_prompt = f"{style_prefix}, {refine_text}" if refine_text else style_prefix
+        full_prompt = build_positive_prompt(refine_text)
         region = self.location_combo.currentData()
         self.command_queue.put(CmdImg2Img(
             prompt_text=full_prompt,

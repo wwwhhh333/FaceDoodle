@@ -6,14 +6,15 @@ import numpy as np
 import threading
 import time
 import queue
-from multiprocessing import Queue, Process, Event
+from multiprocessing import Event
 from app.ai.agent import FaceDoodleAgent
 from app.ai.generator import ComfyClient
 from app.core.face_mesh import FaceDetector
 from app.core.renderer import (render_scene, render_loading_progress, render_face_mesh,
-                                apply_head_pose_skew, _build_location_quad,
-                                composite_stickers_to_merged)
+                                apply_head_pose_skew, _build_location_quad)
 from app.core.face_draw import FaceDrawCanvas
+from app.core.animation import AnimationEngine
+from app.core.animation import TextureAnimator, extract_sprite_frame
 from app.core.protocol import (
     CmdImg2Img,
     AdjMove, AdjRotate, AdjScale, AdjReset,
@@ -23,9 +24,12 @@ from app.core.protocol import (
     DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
     DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
     DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
+    AnimPlaybackState,
 )
 from app.utils.image_proc import load_rgba_sticker
 from app.utils import storage
+from app.core.tracker_stickers import StickerManager
+from app.core.tracker_animation import AnimationProcessor
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -229,19 +233,20 @@ def producer(frame_queue, stop_event):
 # Consumer processor
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ConsumerProcessor:
+class ConsumerProcessor(StickerManager, AnimationProcessor):
     """Central orchestrator for face detection, sticker rendering, AI generation."""
 
     MAX_STICKERS = 20
 
     def __init__(self, in_queue, display_queue, command_queue, adjustment_queue,
-                 gallery_queue, draw_queue, api_key, stop_event, mock=False):
+                 gallery_queue, draw_queue, animation_queue, api_key, stop_event, mock=False):
         self.in_queue = in_queue
         self.display_queue = display_queue
         self.command_queue = command_queue
         self.adjustment_queue = adjustment_queue
         self.gallery_queue = gallery_queue
         self.draw_queue = draw_queue
+        self.animation_queue = animation_queue
         self.stop_event = stop_event
         self.api_key = api_key
         self.mock = mock
@@ -262,6 +267,15 @@ class ConsumerProcessor:
         self.face_draw_active = False
         self.face_draw_region = "full_face"
 
+        self.anim_engine = AnimationEngine()
+        self._anim_evaluations = {}     # instance_id -> dict (last evaluate result)
+        self._adj_is_delta = set()      # instance_ids currently in delta mode
+        self._pending_export = None     # (instance_id, format, fps, output_path)
+
+        self.texture_animator = TextureAnimator()
+        self._pending_texture_gen = None   # AnimGenTexture message
+        self._texture_gen_running = False
+
     # ── public API ──
 
     def run(self):
@@ -281,6 +295,10 @@ class ConsumerProcessor:
                 self._process_adjustment_queue(face_w)
                 self._process_gallery_queue(face_data)
                 self._process_draw_queue(face_data)
+                self._process_animation_queue()
+                self._evaluate_animations()
+                self._process_export()
+                self._process_texture_generation()
 
                 frame = self._render_frame(frame, face_data)
                 self._sync_state_to_ui()
@@ -450,154 +468,6 @@ class ConsumerProcessor:
             elif isinstance(gmsg, GalMergeGroup):
                 self._handle_merge_group(gmsg, face_data)
 
-    def _handle_add_sticker(self, gmsg):
-        if len(self.active_stickers) >= self.MAX_STICKERS:
-            print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，忽略添加请求")
-            return
-        sid = gmsg.sticker_id
-        if not sid:
-            return
-        loaded, meta = storage.get_sticker(sid)
-        if loaded is None or meta is None:
-            return
-        iid = self._add_sticker_instance(
-            loaded, sid,
-            meta.get("region", "forehead_top"),
-            meta.get("scale", 1.0),
-            meta.get("prompt", ""),
-        )
-        self.edit_target_id = iid
-        self.active_content = {
-            "sticker": loaded,
-            "location": meta.get("region", "forehead_top"),
-            "scale": meta.get("scale", 1.0),
-            "sticker_id": sid,
-            "prompt": meta.get("prompt", ""),
-        }
-
-    def _handle_remove_sticker(self, gmsg):
-        iid = gmsg.instance_id
-        removed_sticker_id = None
-        for s in self.active_stickers:
-            if s["instance_id"] == iid:
-                removed_sticker_id = s.get("sticker_id")
-                break
-        self.active_stickers = [s for s in self.active_stickers if s["instance_id"] != iid]
-        self.adjustments.pop(iid, None)
-        if self.edit_target_id == iid:
-            self.edit_target_id = self.active_stickers[-1]["instance_id"] if self.active_stickers else None
-        if self.active_content and self.active_content.get("sticker_id") == removed_sticker_id:
-            self.active_content = None
-
-    def _handle_select_edit_target(self, gmsg):
-        iid = gmsg.instance_id
-        if iid and any(s["instance_id"] == iid for s in self.active_stickers):
-            self.edit_target_id = iid
-        elif not iid:
-            self.edit_target_id = None
-
-    def _handle_load_template(self, gmsg):
-        t = gmsg.template
-        if t and t.get("image") is not None:
-            if len(self.active_stickers) >= self.MAX_STICKERS:
-                print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，忽略添加请求")
-                return
-            iid = self._add_sticker_instance(
-                t["image"], t["id"],
-                t.get("region", "forehead_top"), 1.0,
-                t.get("name", "模板"),
-            )
-            self.edit_target_id = iid
-            self.active_content = {
-                "sticker": t["image"],
-                "location": t.get("region", "forehead_top"),
-                "scale": 1.0,
-                "sticker_id": t["id"],
-                "prompt": t.get("name", "模板"),
-            }
-        else:
-            self.active_stickers.clear()
-            self.adjustments.clear()
-            self.edit_target_id = None
-            self.active_content = None
-
-    def _handle_load_sticker(self, gmsg):
-        sid = gmsg.sticker_id
-        if sid:
-            if len(self.active_stickers) >= self.MAX_STICKERS:
-                print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，忽略添加请求")
-                return
-            loaded, meta = storage.get_sticker(sid)
-            if loaded is not None and meta is not None:
-                iid = self._add_sticker_instance(
-                    loaded, sid,
-                    meta.get("region", "forehead_top"),
-                    meta.get("scale", 1.0),
-                    meta.get("prompt", ""),
-                )
-                self.edit_target_id = iid
-                self.active_content = {
-                    "sticker": loaded,
-                    "location": meta.get("region", "forehead_top"),
-                    "scale": meta.get("scale", 1.0),
-                    "sticker_id": sid,
-                    "prompt": meta.get("prompt", ""),
-                }
-        else:
-            self.active_stickers.clear()
-            self.adjustments.clear()
-            self.edit_target_id = None
-            self.active_content = None
-
-    def _handle_merge_group(self, gmsg, face_data):
-        iids = set(gmsg.instance_ids)
-        merge_face = face_data if (face_data and "nose_tip" in face_data) else self.cached_face_data
-        if len(iids) < 2 or not merge_face:
-            return
-
-        to_merge = [s for s in self.active_stickers if s["instance_id"] in iids]
-        if len(to_merge) < 2:
-            return
-
-        merged_img, merged_location, merged_scale, mrg_ox, mrg_oy = \
-            composite_stickers_to_merged(to_merge, self.adjustments, merge_face)
-        if merged_img is None:
-            return
-
-        prompts = [s.get("prompt", "") for s in to_merge if s.get("prompt")]
-        merged_prompt = " + ".join(prompts[:3])
-        sid = storage.save_sticker(merged_img, {
-            "prompt": merged_prompt or "合并贴纸",
-            "location": merged_location,
-            "scale": merged_scale,
-        })
-
-        for s in to_merge:
-            iid = s["instance_id"]
-            self.active_stickers = [x for x in self.active_stickers if x["instance_id"] != iid]
-            self.adjustments.pop(iid, None)
-
-        merged_instance_id = str(uuid.uuid4())
-        self.adjustments[merged_instance_id] = {
-            "offset_x": mrg_ox, "offset_y": mrg_oy,
-            "rotation": 0.0, "scale_mult": 1.0,
-        }
-        self.active_stickers.append({
-            "instance_id": merged_instance_id,
-            "sticker_id": sid,
-            "sticker": merged_img,
-            "location": merged_location,
-            "scale": merged_scale,
-            "prompt": merged_prompt,
-        })
-        self.edit_target_id = merged_instance_id
-        self.active_content = {
-            "sticker": merged_img, "location": merged_location,
-            "scale": merged_scale, "sticker_id": sid,
-            "prompt": merged_prompt,
-        }
-        self.display_queue.put(DispStickerSaved(sticker_id=sid))
-
     # ── draw queue ──
 
     def _process_draw_queue(self, face_data):
@@ -664,24 +534,6 @@ class ConsumerProcessor:
                     })
                     self.display_queue.put(DispStickerSaved(sticker_id=sid))
 
-    # ── sticker instance management ──
-
-    def _add_sticker_instance(self, sticker_img, sid, location, scale, prompt):
-        instance_id = str(uuid.uuid4())
-        saved = (self._sticker_adjustments.get(sid)
-                 or storage.get_sticker_adjustments(sid))
-        adj = dict(saved) if saved else {
-            "offset_x": 0.0, "offset_y": 0.0,
-            "rotation": 0.0, "scale_mult": 1.0,
-        }
-        self.adjustments[instance_id] = adj
-        self.active_stickers.append({
-            "instance_id": instance_id, "sticker_id": sid,
-            "sticker": sticker_img, "location": location,
-            "scale": scale, "prompt": prompt,
-        })
-        return instance_id
-
     # ── rendering ──
 
     def _render_frame(self, frame, face_data):
@@ -697,13 +549,27 @@ class ConsumerProcessor:
         for instance in self.active_stickers:
             if instance["sticker"] is None:
                 continue
-            adj = self.adjustments.get(instance["instance_id"], {
+            iid = instance["instance_id"]
+            manual = self.adjustments.get(iid, {
                 "offset_x": 0.0, "offset_y": 0.0,
                 "rotation": 0.0, "scale_mult": 1.0,
             })
-            adj["edit_mode"] = (instance["instance_id"] == self.edit_target_id)
+            adj = dict(manual)
+            if self.anim_engine.is_playing(iid):
+                anim = self._anim_evaluations.get(iid)
+                if anim:
+                    adj["offset_x"] = anim["offset_x"] + manual["offset_x"]
+                    adj["offset_y"] = anim["offset_y"] + manual["offset_y"]
+                    adj["rotation"] = anim["rotation"] + manual["rotation"]
+                    adj["scale_mult"] = anim["scale_mult"] * manual["scale_mult"]
+            adj["edit_mode"] = (iid == self.edit_target_id)
+            if instance.get("is_animated"):
+                frame_idx, cols, rows = self.texture_animator.get_frame_params(iid)
+                sticker = extract_sprite_frame(instance["sticker"], frame_idx, cols, rows)
+            else:
+                sticker = instance["sticker"]
             content = {
-                "sticker": instance["sticker"],
+                "sticker": sticker,
                 "location": instance["location"],
                 "scale": instance["scale"],
             }
@@ -735,15 +601,25 @@ class ConsumerProcessor:
             edit_target_id=self.edit_target_id,
         ))
 
+        if self.edit_target_id:
+            info = self.anim_engine.get_playback_info(self.edit_target_id)
+            if info:
+                self.display_queue.put(AnimPlaybackState(
+                    instance_id=info["instance_id"],
+                    playing=info["playing"],
+                    time=info["time"],
+                    duration=info["duration"],
+                ))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Consumer entry point (thin wrapper)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def consumer(in_queue, display_queue, command_queue, adjustment_queue,
-             gallery_queue, draw_queue, api_key, stop_event, mock=False):
+             gallery_queue, draw_queue, animation_queue, api_key, stop_event, mock=False):
     processor = ConsumerProcessor(
         in_queue, display_queue, command_queue, adjustment_queue,
-        gallery_queue, draw_queue, api_key, stop_event, mock,
+        gallery_queue, draw_queue, animation_queue, api_key, stop_event, mock,
     )
     processor.run()

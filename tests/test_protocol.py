@@ -3,16 +3,19 @@
 import dataclasses
 
 from app.core.protocol import (
-    Adj, Gal, Draw, Disp,
+    Adj, Gal, Draw, Disp, Anim,
     AdjMove, AdjRotate, AdjScale, AdjReset,
     GalAddSticker, GalRemoveSticker, GalSelectEditTarget,
     GalLoadTemplate, GalLoadSticker, GalMergeGroup,
     DrawToggleDrawMode, DrawSetRegion, DrawSetBrush, DrawToggleEraser,
     DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
     DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
+    AnimPlay, AnimPause, AnimStop, AnimSetClip, AnimAddKeyframe,
+    AnimRemoveKeyframe, AnimSetLoop, AnimSeek, AnimExport,
     DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
+    AnimExportProgress, AnimClipUpdated, AnimPlaybackState,
     CmdImg2Img,
-    AdjustmentMsg, GalleryMsg, DrawMsg, DisplayStatusMsg,
+    AdjustmentMsg, GalleryMsg, DrawMsg, AnimationMsg, DisplayStatusMsg,
 )
 
 
@@ -46,6 +49,21 @@ def test_disp_constants():
     assert Disp.STICKER_SAVED == "sticker_saved"
     assert Disp.GENERATION_FAILED == "generation_failed"
     assert Disp.ACTIVE_STICKERS_CHANGED == "active_stickers_changed"
+
+
+def test_anim_constants():
+    assert Anim.PLAY == "anim_play"
+    assert Anim.PAUSE == "anim_pause"
+    assert Anim.STOP == "anim_stop"
+    assert Anim.SET_CLIP == "anim_set_clip"
+    assert Anim.ADD_KEYFRAME == "anim_add_keyframe"
+    assert Anim.REMOVE_KEYFRAME == "anim_remove_keyframe"
+    assert Anim.SET_LOOP == "anim_set_loop"
+    assert Anim.SEEK == "anim_seek"
+    assert Anim.EXPORT == "anim_export"
+    assert Anim.EXPORT_PROGRESS == "anim_export_progress"
+    assert Anim.CLIP_UPDATED == "anim_clip_updated"
+    assert Anim.PLAYBACK_STATE == "anim_playback_state"
 
 
 # ── Adjustment messages ──
@@ -189,6 +207,128 @@ def test_draw_save():
     assert m.action == "save"
 
 
+# ── Animation queue messages ──
+
+def test_anim_play():
+    m = AnimPlay(instance_id="inst1")
+    assert m.action == "anim_play"
+    assert m.instance_id == "inst1"
+
+
+def test_anim_pause():
+    m = AnimPause(instance_id="inst1")
+    assert m.action == "anim_pause"
+    assert m.instance_id == "inst1"
+
+
+def test_anim_stop():
+    m = AnimStop(instance_id="inst1")
+    assert m.action == "anim_stop"
+    assert m.instance_id == "inst1"
+
+
+def test_anim_set_clip():
+    m = AnimSetClip(instance_id="inst1", clip_id="clip1")
+    assert m.action == "anim_set_clip"
+    assert m.instance_id == "inst1"
+    assert m.clip_id == "clip1"
+
+
+def test_anim_add_keyframe():
+    m = AnimAddKeyframe(instance_id="inst1", time=1.5, easing="ease-in-out")
+    assert m.action == "anim_add_keyframe"
+    assert m.instance_id == "inst1"
+    assert m.time == 1.5
+    assert m.easing == "ease-in-out"
+
+
+def test_anim_add_keyframe_defaults():
+    m = AnimAddKeyframe()
+    assert m.time == 0.0
+    assert m.easing == "linear"
+
+
+def test_anim_remove_keyframe():
+    m = AnimRemoveKeyframe(instance_id="inst1", keyframe_index=2)
+    assert m.action == "anim_remove_keyframe"
+    assert m.instance_id == "inst1"
+    assert m.keyframe_index == 2
+
+
+def test_anim_set_loop():
+    m = AnimSetLoop(instance_id="inst1", loop=True)
+    assert m.action == "anim_set_loop"
+    assert m.instance_id == "inst1"
+    assert m.loop is True
+
+
+def test_anim_seek():
+    m = AnimSeek(instance_id="inst1", time=2.5)
+    assert m.action == "anim_seek"
+    assert m.instance_id == "inst1"
+    assert m.time == 2.5
+
+
+def test_anim_export():
+    m = AnimExport(instance_id="inst1", format="gif", fps=15, output_path="/tmp/out.gif")
+    assert m.action == "anim_export"
+    assert m.instance_id == "inst1"
+    assert m.format == "gif"
+    assert m.fps == 15
+    assert m.output_path == "/tmp/out.gif"
+
+
+def test_anim_export_defaults():
+    m = AnimExport()
+    assert m.format == "mp4"
+    assert m.fps == 24
+    assert m.output_path == ""
+
+
+# ── Animation display messages ──
+
+def test_anim_export_progress():
+    m = AnimExportProgress(progress=0.5, done=False, output_path="/tmp/out.mp4")
+    assert m.action == "anim_export_progress"
+    assert m.progress == 0.5
+    assert not m.done
+    assert m.output_path == "/tmp/out.mp4"
+
+
+def test_anim_export_progress_done():
+    m = AnimExportProgress(progress=1.0, done=True, output_path="/tmp/out.mp4")
+    assert m.progress == 1.0
+    assert m.done
+
+
+def test_anim_clip_updated():
+    m = AnimClipUpdated(clip_data={"id": "c1", "name": "bounce", "duration": 2.0})
+    assert m.action == "anim_clip_updated"
+    assert m.clip_data["id"] == "c1"
+    assert m.clip_data["name"] == "bounce"
+
+
+def test_anim_clip_updated_defaults():
+    m = AnimClipUpdated()
+    assert m.clip_data == {}
+
+
+def test_anim_playback_state():
+    m = AnimPlaybackState(instance_id="inst1", playing=True, time=1.5, duration=3.0)
+    assert m.action == "anim_playback_state"
+    assert m.instance_id == "inst1"
+    assert m.playing is True
+    assert m.time == 1.5
+    assert m.duration == 3.0
+
+
+def test_anim_playback_state_defaults():
+    m = AnimPlaybackState()
+    assert m.playing is False
+    assert m.time == 0.0
+    assert m.duration == 0.0
+
+
 # ── Display messages ──
 
 def test_disp_sticker_saved():
@@ -248,8 +388,32 @@ def test_draw_stroke_point_is_draw_msg():
     assert isinstance(DrawStrokePoint(), DrawMsg)
 
 
+def test_anim_play_is_animation_msg():
+    assert isinstance(AnimPlay(), AnimationMsg)
+
+
+def test_anim_add_keyframe_is_animation_msg():
+    assert isinstance(AnimAddKeyframe(), AnimationMsg)
+
+
+def test_anim_export_is_animation_msg():
+    assert isinstance(AnimExport(), AnimationMsg)
+
+
 def test_disp_sticker_saved_is_display_status_msg():
     assert isinstance(DispStickerSaved(), DisplayStatusMsg)
+
+
+def test_anim_export_progress_is_display_status_msg():
+    assert isinstance(AnimExportProgress(), DisplayStatusMsg)
+
+
+def test_anim_clip_updated_is_display_status_msg():
+    assert isinstance(AnimClipUpdated(), DisplayStatusMsg)
+
+
+def test_anim_playback_state_is_display_status_msg():
+    assert isinstance(AnimPlaybackState(), DisplayStatusMsg)
 
 
 # ── All dataclasses are actually dataclasses ──
@@ -261,7 +425,10 @@ _ALL_MSG_TYPES = [
     DrawToggleDrawMode, DrawSetRegion, DrawSetBrush, DrawToggleEraser,
     DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
     DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
+    AnimPlay, AnimPause, AnimStop, AnimSetClip, AnimAddKeyframe,
+    AnimRemoveKeyframe, AnimSetLoop, AnimSeek, AnimExport,
     DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
+    AnimExportProgress, AnimClipUpdated, AnimPlaybackState,
     CmdImg2Img,
 ]
 

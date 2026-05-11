@@ -51,6 +51,23 @@ class Disp:
     ACTIVE_STICKERS_CHANGED = "active_stickers_changed"
 
 
+class Anim:
+    PLAY            = "anim_play"
+    PAUSE           = "anim_pause"
+    STOP            = "anim_stop"
+    SET_CLIP        = "anim_set_clip"
+    ADD_KEYFRAME    = "anim_add_keyframe"
+    REMOVE_KEYFRAME = "anim_remove_keyframe"
+    SET_LOOP        = "anim_set_loop"
+    SEEK            = "anim_seek"
+    EXPORT          = "anim_export"
+    EXPORT_PROGRESS = "anim_export_progress"
+    CLIP_UPDATED    = "anim_clip_updated"
+    PLAYBACK_STATE  = "anim_playback_state"
+    GEN_TEXTURE     = "anim_gen_texture"
+    GEN_PROGRESS    = "anim_gen_progress"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # adjustment_queue  (UI → Consumer)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -218,6 +235,87 @@ DrawMsg = (DrawToggleDrawMode | DrawSetRegion | DrawSetBrush | DrawToggleEraser
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# animation_queue  (UI → Consumer)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class AnimPlay:
+    action: str = Anim.PLAY
+    instance_id: str = ""
+
+
+@dataclass
+class AnimPause:
+    action: str = Anim.PAUSE
+    instance_id: str = ""
+
+
+@dataclass
+class AnimStop:
+    action: str = Anim.STOP
+    instance_id: str = ""
+
+
+@dataclass
+class AnimSetClip:
+    action: str = Anim.SET_CLIP
+    instance_id: str = ""
+    clip_id: str = ""
+
+
+@dataclass
+class AnimAddKeyframe:
+    action: str = Anim.ADD_KEYFRAME
+    instance_id: str = ""
+    time: float = 0.0
+    easing: str = "linear"
+
+
+@dataclass
+class AnimRemoveKeyframe:
+    action: str = Anim.REMOVE_KEYFRAME
+    instance_id: str = ""
+    keyframe_index: int = 0
+
+
+@dataclass
+class AnimSetLoop:
+    action: str = Anim.SET_LOOP
+    instance_id: str = ""
+    loop: bool = False
+
+
+@dataclass
+class AnimSeek:
+    action: str = Anim.SEEK
+    instance_id: str = ""
+    time: float = 0.0
+
+
+@dataclass
+class AnimExport:
+    action: str = Anim.EXPORT
+    instance_id: str = ""
+    format: str = "mp4"
+    fps: int = 24
+    output_path: str = ""
+
+
+@dataclass
+class AnimGenTexture:
+    action: str = Anim.GEN_TEXTURE
+    sticker_id: str = ""
+    motion_prompt: str = ""
+    frame_count: int = 16
+    fps: int = 8
+
+
+AnimationMsg = (AnimPlay | AnimPause | AnimStop | AnimSetClip
+                | AnimAddKeyframe | AnimRemoveKeyframe | AnimSetLoop
+                | AnimSeek | AnimExport | AnimGenTexture)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # display_queue  (Consumer → UI)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -241,7 +339,42 @@ class DispActiveStickersChanged:
     edit_target_id: Optional[str] = None
 
 
-DisplayStatusMsg = DispStickerSaved | DispGenerationFailed | DispActiveStickersChanged
+@dataclass
+class AnimExportProgress:
+    action: str = Anim.EXPORT_PROGRESS
+    progress: float = 0.0
+    done: bool = False
+    output_path: str = ""
+
+
+@dataclass
+class AnimClipUpdated:
+    action: str = Anim.CLIP_UPDATED
+    clip_data: dict = field(default_factory=dict)
+
+
+@dataclass
+class AnimPlaybackState:
+    action: str = Anim.PLAYBACK_STATE
+    instance_id: str = ""
+    playing: bool = False
+    time: float = 0.0
+    duration: float = 0.0
+
+
+@dataclass
+class AnimGenProgress:
+    action: str = Anim.GEN_PROGRESS
+    sticker_id: str = ""
+    progress: float = 0.0
+    done: bool = False
+    error: str = ""
+    result_sticker_id: str = ""
+
+
+DisplayStatusMsg = (DispStickerSaved | DispGenerationFailed | DispActiveStickersChanged
+                    | AnimExportProgress | AnimClipUpdated | AnimPlaybackState
+                    | AnimGenProgress)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -180,3 +180,116 @@ def add_recent_prompt(prompt_text):
     recent.insert(0, prompt_text)
     prefs["recent_prompts"] = recent[:10]
     save_preferences(prefs)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Animation clip persistence
+# ══════════════════════════════════════════════════════════════════════════════
+
+ANIMATIONS_DIR = "assets/animations"
+ANIMATIONS_INDEX = os.path.join(ANIMATIONS_DIR, "animations.json")
+
+
+def _ensure_anim_dir():
+    os.makedirs(ANIMATIONS_DIR, exist_ok=True)
+
+
+def _load_anim_index():
+    _ensure_anim_dir()
+    if not os.path.exists(ANIMATIONS_INDEX):
+        return {"clips": []}
+    try:
+        with open(ANIMATIONS_INDEX, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {"clips": []}
+
+
+def _save_anim_index(data):
+    _ensure_anim_dir()
+    with open(ANIMATIONS_INDEX, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def save_animation_clip(clip_data):
+    """Persist an animation clip dict (from AnimationClip.to_dict())."""
+    with _index_lock:
+        index = _load_anim_index()
+        existing = next((c for c in index["clips"] if c["id"] == clip_data["id"]), None)
+        if existing:
+            existing.update(clip_data)
+        else:
+            index["clips"].append(clip_data)
+        _save_anim_index(index)
+    return clip_data["id"]
+
+
+def load_animation_clips():
+    """Return list of clip dicts."""
+    return _load_anim_index().get("clips", [])
+
+
+def delete_animation_clip(clip_id):
+    with _index_lock:
+        index = _load_anim_index()
+        index["clips"] = [c for c in index["clips"] if c["id"] != clip_id]
+        _save_anim_index(index)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Animated (sprite-sheet) sticker persistence
+# ══════════════════════════════════════════════════════════════════════════════
+
+def save_animated_sticker(sprite_sheet_bgra, anim_meta, base_metadata):
+    """Persist an animated sprite sheet sticker.
+
+    Args:
+        sprite_sheet_bgra: BGRA sprite sheet (uint8 numpy array)
+        anim_meta: dict with keys frame_count, fps, cols, rows, motion_prompt
+        base_metadata: dict with keys prompt, location, scale
+
+    Returns:
+        sticker_id (str)
+    """
+    sticker_id = str(uuid.uuid4())
+    image_name = f"{sticker_id}.png"
+    thumb_name = f"{sticker_id}_thumb.png"
+    image_path = os.path.join(GALLERY_DIR, image_name)
+    thumb_path = os.path.join(GALLERY_DIR, thumb_name)
+
+    _ensure_dir()
+    cv2.imwrite(image_path, sprite_sheet_bgra)
+
+    # Extract first frame for thumbnail
+    cols = anim_meta.get("cols", 1)
+    rows = anim_meta.get("rows", 1)
+    sheet_h, sheet_w = sprite_sheet_bgra.shape[:2]
+    cell_h = sheet_h // rows
+    cell_w = sheet_w // cols
+    first_frame = sprite_sheet_bgra[0:cell_h, 0:cell_w].copy()
+    thumb = _make_thumbnail(first_frame)
+    cv2.imwrite(thumb_path, thumb)
+
+    entry = {
+        "id": sticker_id,
+        "prompt": base_metadata.get("prompt", anim_meta.get("motion_prompt", "")),
+        "region": base_metadata.get("location", "forehead_top"),
+        "scale": base_metadata.get("scale", 1.0),
+        "image": image_name,
+        "thumb": thumb_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "favorite": False,
+        "is_animated": True,
+        "frame_count": anim_meta.get("frame_count", 16),
+        "frame_cols": cols,
+        "frame_rows": rows,
+        "fps": anim_meta.get("fps", 8),
+        "motion_prompt": anim_meta.get("motion_prompt", ""),
+    }
+
+    with _index_lock:
+        index = _load_index()
+        index["stickers"].append(entry)
+        _save_index(index)
+
+    return sticker_id

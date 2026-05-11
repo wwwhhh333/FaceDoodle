@@ -12,3 +12,4 @@ websockets
 aiohttp
 PyQt5
 python-multipart
+rembg

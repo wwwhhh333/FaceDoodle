@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QShortcut, QMessageBox,
-                             QFileDialog, QDialog, QComboBox, QSlider)
+                             QFileDialog, QDialog, QComboBox, QSlider, QCheckBox)
 from PyQt5.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 
@@ -10,7 +10,10 @@ from app.ui.widgets import (ThumbnailCard, StyledButton, GradientBar,
                             GalleryScrollArea, REGION_OPTIONS, PRESET_COLORS)
 from app.ui.drawing_widgets import DrawingDialog
 from app.ui.sticker_panel import ActiveStickersPanel
+from app.ui.animation_timeline import AnimationTimeline
+from app.ui.animation_gen_dialog import AnimationGenDialog
 from app.utils import storage
+from app.utils.config_loader import get_config, get_style_preset_items
 from app.core.brush import load_brush_config
 from app.core.templates import load_templates
 from app.core.protocol import (
@@ -21,6 +24,8 @@ from app.core.protocol import (
     DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
     DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
     DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
+    AnimExportProgress, AnimClipUpdated, AnimPlaybackState,
+    AnimGenTexture, AnimGenProgress,
 )
 
 
@@ -29,6 +34,10 @@ class VideoUpdateThread(QThread):
     sticker_saved_signal = pyqtSignal(str)
     generation_failed_signal = pyqtSignal(str)
     active_stickers_signal = pyqtSignal(object)
+    anim_export_progress_signal = pyqtSignal(object)
+    anim_clip_updated_signal = pyqtSignal(object)
+    anim_playback_state_signal = pyqtSignal(object)
+    anim_gen_progress_signal = pyqtSignal(object)
 
     def __init__(self, display_queue, gallery_queue):
         super().__init__()
@@ -48,6 +57,14 @@ class VideoUpdateThread(QThread):
                     self.generation_failed_signal.emit(item.error)
                 elif isinstance(item, DispActiveStickersChanged):
                     self.active_stickers_signal.emit(item)
+                elif isinstance(item, AnimExportProgress):
+                    self.anim_export_progress_signal.emit(item)
+                elif isinstance(item, AnimClipUpdated):
+                    self.anim_clip_updated_signal.emit(item)
+                elif isinstance(item, AnimPlaybackState):
+                    self.anim_playback_state_signal.emit(item)
+                elif isinstance(item, AnimGenProgress):
+                    self.anim_gen_progress_signal.emit(item)
             except Exception:
                 pass
 
@@ -57,13 +74,14 @@ class VideoUpdateThread(QThread):
 
 
 class FaceDoodleWindow(QMainWindow):
-    def __init__(self, display_queue, command_queue, adjustment_queue, gallery_queue, draw_queue):
+    def __init__(self, display_queue, command_queue, adjustment_queue, gallery_queue, draw_queue, animation_queue):
         super().__init__()
         self.display_queue = display_queue
         self.command_queue = command_queue
         self.adjustment_queue = adjustment_queue
         self.gallery_queue = gallery_queue
         self.draw_queue = draw_queue
+        self.animation_queue = animation_queue
 
         self._edit_mode = False
         self._mouse_down = False
@@ -104,6 +122,10 @@ class FaceDoodleWindow(QMainWindow):
         self.video_thread.sticker_saved_signal.connect(self._on_sticker_saved)
         self.video_thread.generation_failed_signal.connect(self._on_generation_failed)
         self.video_thread.active_stickers_signal.connect(self._on_active_stickers_changed)
+        self.video_thread.anim_clip_updated_signal.connect(self._on_anim_clip_updated)
+        self.video_thread.anim_playback_state_signal.connect(self._on_anim_playback_state)
+        self.video_thread.anim_export_progress_signal.connect(self._on_anim_export_progress)
+        self.video_thread.anim_gen_progress_signal.connect(self._on_anim_gen_progress)
         self.video_thread.start()
 
     def _init_stylesheet(self):
@@ -236,6 +258,19 @@ class FaceDoodleWindow(QMainWindow):
         self.add_to_face_btn.setEnabled(False)
         rp_layout.addWidget(self.add_to_face_btn)
 
+        # AI Animation button
+        self.ai_anim_btn = QPushButton("AI 动画")
+        self.ai_anim_btn.setCursor(Qt.PointingHandCursor)
+        self.ai_anim_btn.setStyleSheet(
+            "QPushButton { background: #7c3aed; color: white; border: none; "
+            "padding: 6px 0; font-size: 12px; font-weight: bold; }"
+            "QPushButton:hover { background: #a855f7; }"
+            "QPushButton:disabled { background: #ddd; color: #999; }"
+        )
+        self.ai_anim_btn.clicked.connect(self._on_ai_animate)
+        self.ai_anim_btn.setEnabled(False)
+        rp_layout.addWidget(self.ai_anim_btn)
+
         content_row.addWidget(right_panel)
         root.addLayout(content_row, stretch=1)
 
@@ -246,6 +281,11 @@ class FaceDoodleWindow(QMainWindow):
         )
         self.edit_indicator.setAlignment(Qt.AlignCenter)
         self.edit_indicator.setVisible(False)
+
+        # ── Animation timeline ──
+        self.anim_timeline = AnimationTimeline(self.animation_queue)
+        self.anim_timeline.setVisible(False)
+        root.addWidget(self.anim_timeline)
 
         # ── 3. 输入区 ──
         input_row = QWidget()
@@ -258,6 +298,22 @@ class FaceDoodleWindow(QMainWindow):
         self.input_box.setPlaceholderText("描述你的创意，例如：一副赛博朋克风格的护目镜...")
         self.input_box.returnPressed.connect(self.send_command)
         input_layout.addWidget(self.input_box)
+
+        self.style_combo = QComboBox()
+        self.style_combo.setMinimumWidth(110)
+        self.style_combo.setToolTip("选择生成风格预设")
+        self._populate_style_combo()
+        self.style_combo.currentIndexChanged.connect(self._on_style_changed)
+        input_layout.addWidget(self.style_combo)
+
+        self.symmetry_check = QCheckBox("对称模式")
+        self.symmetry_check.setToolTip("启用后在提示词中添加对称性关键词")
+        self.symmetry_check.setCursor(Qt.PointingHandCursor)
+        self.symmetry_check.stateChanged.connect(self._on_symmetry_toggled)
+        input_layout.addWidget(self.symmetry_check)
+
+        cfg = get_config()
+        self.symmetry_check.setChecked(cfg.get("generation", {}).get("symmetry_enabled", False))
 
         self.send_btn = StyledButton("生成贴纸", "#2c2c2c", "#444")
         self.send_btn.clicked.connect(self.send_command)
@@ -585,7 +641,8 @@ class FaceDoodleWindow(QMainWindow):
             if self._gallery_filter == "favorites" and not s.get("favorite", False):
                 continue
             thumb = storage.get_sticker_thumb(sid)
-            card = ThumbnailCard(sid, thumb, s.get("prompt", ""), s.get("favorite", False))
+            card = ThumbnailCard(sid, thumb, s.get("prompt", ""), s.get("favorite", False),
+                                is_animated=s.get("is_animated", False))
             card.clicked.connect(self._on_gallery_click)
             card.set_selected(sid in self._gallery_selected_ids)
             card.set_active(False)
@@ -630,11 +687,20 @@ class FaceDoodleWindow(QMainWindow):
     def _update_gallery_selection_visuals(self):
         for sid, card in self._gallery_items.items():
             card.set_selected(sid in self._gallery_selected_ids)
-            card.set_active(False)  # Active state comes from active_panel now
+            card.set_active(False)
         for tid, card in self._template_cards.items():
             card.set_selected(tid in self._gallery_selected_ids)
             card.set_active(False)
         self.add_to_face_btn.setEnabled(len(self._gallery_selected_ids) > 0)
+
+        # Enable AI Animation only when a single non-template, non-animated sticker is selected
+        can_animate = False
+        if len(self._gallery_selected_ids) == 1:
+            sid = next(iter(self._gallery_selected_ids))
+            card = self._gallery_items.get(sid)
+            if card and not card._animated:
+                can_animate = True
+        self.ai_anim_btn.setEnabled(can_animate)
 
     def _on_add_selected_to_face(self):
         if not self._gallery_selected_ids:
@@ -751,6 +817,82 @@ class FaceDoodleWindow(QMainWindow):
         if dlg.exec_() == DrawingDialog.Accepted:
             self._load_gallery()
 
+    def _populate_style_combo(self):
+        self.style_combo.blockSignals(True)
+        self.style_combo.clear()
+        items = get_style_preset_items()
+        cfg = get_config()
+        selected_key = cfg.get("style", {}).get("selected_preset", "flat_vector")
+        selected_idx = 0
+        for idx, (key, name) in enumerate(items):
+            self.style_combo.addItem(name, key)
+            if key == selected_key:
+                selected_idx = idx
+        self.style_combo.setCurrentIndex(selected_idx)
+        self.style_combo.blockSignals(False)
+
+    def _on_style_changed(self, idx):
+        preset_key = self.style_combo.currentData()
+        if not preset_key:
+            return
+        cfg = get_config()
+        cfg.setdefault("style", {})["selected_preset"] = preset_key
+
+        # Update LoRA from preset if specified
+        preset = cfg.get("style", {}).get("presets", {}).get(preset_key, {})
+        if "lora_name" in preset:
+            lora = cfg.setdefault("model", {}).setdefault("lora", {})
+            if preset["lora_name"]:
+                lora["name"] = preset["lora_name"]
+                lora["strength_model"] = preset.get("lora_strength_model", 0.8)
+                lora["strength_clip"] = preset.get("lora_strength_clip", 0.8)
+            else:
+                # Empty lora_name means disable LoRA
+                lora["strength_model"] = 0.0
+                lora["strength_clip"] = 0.0
+        # If preset has no lora_name key at all, don't touch the global lora
+
+        # Persist both style selection and lora changes
+        self._save_style_and_lora_to_disk(preset_key)
+
+    def _update_config_json(self, update_fn):
+        import json, os
+        try:
+            if os.path.exists("config.json"):
+                with open("config.json", "r", encoding="utf-8") as f:
+                    disk_cfg = json.load(f)
+            else:
+                disk_cfg = {}
+            update_fn(disk_cfg)
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(disk_cfg, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[UI] 保存 config.json 失败: {e}")
+
+    def _save_style_and_lora_to_disk(self, preset_key):
+        def _update(cfg):
+            cfg.setdefault("style", {})["selected_preset"] = preset_key
+            preset = cfg.get("style", {}).get("presets", {}).get(preset_key, {})
+            if "lora_name" in preset:
+                lora = cfg.setdefault("model", {}).setdefault("lora", {})
+                if preset["lora_name"]:
+                    lora["name"] = preset["lora_name"]
+                    lora["strength_model"] = preset.get("lora_strength_model", 0.8)
+                    lora["strength_clip"] = preset.get("lora_strength_clip", 0.8)
+                else:
+                    lora["strength_model"] = 0.0
+                    lora["strength_clip"] = 0.0
+        self._update_config_json(_update)
+
+    def _on_symmetry_toggled(self, state):
+        enabled = state == Qt.Checked
+        cfg = get_config()
+        cfg.setdefault("generation", {})["symmetry_enabled"] = enabled
+        self._save_symmetry_to_disk(enabled)
+
+    def _save_symmetry_to_disk(self, enabled):
+        self._update_config_json(lambda cfg: cfg.setdefault("generation", {}).update(symmetry_enabled=enabled))
+
     def _show_settings(self):
         from app.utils.config_loader import get_config
         cfg = get_config()
@@ -818,6 +960,12 @@ class FaceDoodleWindow(QMainWindow):
         self._edit_target_id = edit_target_id
         self._sync_active_panel(thumbs_info)
 
+        if edit_target_id:
+            self.anim_timeline.set_instance(edit_target_id)
+            self.anim_timeline.setVisible(True)
+        else:
+            self.anim_timeline.setVisible(False)
+
     def _sync_active_panel(self, thumbs_info=None):
         if not self._active_instance_ids:
             self.active_panel.clear_all()
@@ -834,7 +982,49 @@ class FaceDoodleWindow(QMainWindow):
     def _on_merge_group(self):
         if len(self._active_instance_ids) < 2:
             return
+
+    def _on_anim_clip_updated(self, msg):
+        self.anim_timeline.update_clip(msg.clip_data)
+
+    def _on_anim_playback_state(self, msg):
+        self.anim_timeline.update_playback(msg.playing, msg.time, msg.duration)
+
+    def _on_anim_export_progress(self, msg):
+        if msg.done:
+            if msg.output_path:
+                print(f"[UI] 导出完成: {msg.output_path}")
+            else:
+                print("[UI] 导出失败")
         self.gallery_queue.put(GalMergeGroup(instance_ids=list(self._active_instance_ids)))
+
+    def _on_ai_animate(self):
+        if len(self._gallery_selected_ids) != 1:
+            return
+        sid = next(iter(self._gallery_selected_ids))
+        dlg = AnimationGenDialog(sid, self)
+        self._ai_anim_dlg = dlg
+        if dlg.exec_() == QDialog.Accepted:
+            params = dlg.result()
+            self.animation_queue.put(AnimGenTexture(
+                sticker_id=params["sticker_id"],
+                motion_prompt=params["motion_prompt"],
+                frame_count=params["frame_count"],
+                fps=params["fps"],
+            ))
+            self._gallery_selected_ids.clear()
+            self._update_gallery_selection_visuals()
+
+    def _on_anim_gen_progress(self, msg):
+        dlg = getattr(self, '_ai_anim_dlg', None)
+        if dlg and (not msg.done):
+            dlg.set_progress(msg.progress)
+        elif dlg and msg.done:
+            dlg.set_progress(1.0)
+            if msg.error:
+                dlg.set_error(msg.error)
+            else:
+                # Refresh gallery to show new animated sticker
+                self._refresh_gallery()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

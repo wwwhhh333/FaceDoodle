@@ -2,6 +2,8 @@
 
 
 import json
+
+from app.utils.config_loader import build_negative_prompt
 import os
 import re
 import time
@@ -153,19 +155,19 @@ class ComfyClient:
         for node_id in ordered_ids:
             yield node_id, outputs[node_id]
 
-    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None, input_image_path=None):
+    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None, input_image_path=None, seed=None):
         """
         同步生成逻辑：提交任务 -> 轮询状态 -> 返回结果路径
         """
         if timeout is None:
             timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 120)
 
-        # 1. 加载工作流 JSON
-        workflow_path = os.path.join(os.getcwd(), "app", "workflows", workflow_name)
+        # 加载工作流 JSON
+        workflow_path = os.path.join(os.getcwd(), "assets", "workflows", workflow_name)
         with open(workflow_path, 'r', encoding='utf-8') as f:
             workflow = json.load(f)
 
-        # 2. 注入提示词
+        # 注入提示词
         prompt_updated = False
         negative_updated = False
         for node_id, node in workflow.items():
@@ -174,19 +176,14 @@ class ComfyClient:
                 node["inputs"]["text"] = prompt_text
                 prompt_updated = True
             elif title == "CLIP Text Encode (Negative)":
-                if negative_prompt:
-                    node["inputs"]["text"] = negative_prompt
-                elif not str(node.get("inputs", {}).get("text", "")).strip():
-                    node["inputs"]["text"] = self._cfg.get("generation", {}).get(
-                        "negative_prompt",
-                        "photo, realistic, 3D, shadow, background, blur, noisy edges"
-                    )
+                base_neg = negative_prompt or str(node.get("inputs", {}).get("text", "")).strip() or None
+                node["inputs"]["text"] = build_negative_prompt(override=base_neg)
                 negative_updated = True
 
         if not prompt_updated:
             raise ValueError("工作流中未找到可用的正向提示词节点")
 
-        # 3. LoRA 名称覆盖
+        # LoRA 名称覆盖
         lora_cfg = self._cfg.get("model", {}).get("lora", {})
         if lora_cfg:
             for node in workflow.values():
@@ -219,7 +216,7 @@ class ComfyClient:
             else:
                 print("[ComfyClient] 警告: 图片上传失败，将按 text-to-image 模式运行")
 
-        # 4. 根据 prompt 生成输出文件名（取前两个逗号分隔的词组）
+        # 根据 prompt 生成输出文件名
         slug_parts = [p.strip() for p in prompt_text.split(",") if p.strip()]
         short_prompt = "_".join(slug_parts[:2]) if len(slug_parts) >= 2 else slug_parts[0] if slug_parts else "sticker"
         slug = re.sub(r'[^\w]', '_', short_prompt.lower())
@@ -235,11 +232,14 @@ class ComfyClient:
                 sampler_node = node
                 break
         if sampler_node:
-            sampler_node.setdefault("inputs", {})["seed"] = uuid.uuid4().int & ((1 << 63) - 1)
+            if seed is not None:
+                sampler_node.setdefault("inputs", {})["seed"] = seed
+            else:
+                sampler_node.setdefault("inputs", {})["seed"] = uuid.uuid4().int & ((1 << 63) - 1)
 
         previous_temp_files = self._snapshot_temp_files()
 
-        # 3. 提交任务给 ComfyUI
+        # 提交任务给 ComfyUI
         p = {"prompt": workflow}
         try:
             http_res = requests.post(
@@ -277,7 +277,7 @@ class ComfyClient:
 
         prompt_id = res['prompt_id']
 
-        # 4. 轮询历史记录，等待任务完成
+        # 轮询历史记录，等待任务完成
         start_time = time.time()
         while time.time() - start_time < timeout:
             history_res = requests.get(
@@ -305,6 +305,121 @@ class ComfyClient:
                         print(f"[ComfyClient] 使用本地缓存文件兜底: {fallback_file}")
                         return fallback_file
 
-            time.sleep(0.5)  # 每 0.5 秒轮询一次
+            time.sleep(0.5)
 
         return None
+
+    def generate_animated_frames(self, prompt_text, workflow_name,
+                                  input_image_path, frame_count=16, fps=8,
+                                  seed=None, negative_prompt=None, timeout=None):
+        """Submit an AnimateDiff I2V workflow, download all output frames.
+
+        Returns a list of local file paths sorted by frame order.
+        """
+        if timeout is None:
+            timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 300)
+
+        workflow_path = os.path.join(os.getcwd(), "assets", "workflows", workflow_name)
+        with open(workflow_path, 'r', encoding='utf-8') as f:
+            workflow = json.load(f)
+
+        # Inject prompt, negative, seed, frame_count
+        for node_id, node in workflow.items():
+            title = node.get("_meta", {}).get("title", "")
+            class_type = node.get("class_type", "")
+            if title == "CLIP Text Encode (Prompt)":
+                node["inputs"]["text"] = prompt_text
+            elif title == "CLIP Text Encode (Negative)":
+                base_neg = negative_prompt or str(node.get("inputs", {}).get("text", "")).strip() or None
+                node["inputs"]["text"] = build_negative_prompt(override=base_neg)
+            elif class_type == "KSampler":
+                if seed is not None:
+                    node.setdefault("inputs", {})["seed"] = int(seed)
+                else:
+                    node.setdefault("inputs", {})["seed"] = uuid.uuid4().int & ((1 << 63) - 1)
+            elif class_type == "EmptyLatentImage":
+                node.setdefault("inputs", {})["batch_size"] = frame_count
+            elif class_type == "SaveImage":
+                slug = re.sub(r'[^\w]', '_', prompt_text.lower())[:40]
+                node["inputs"]["filename_prefix"] = f"FaceDoodle/anim_{slug}"
+
+        # Inject LoRA config
+        lora_cfg = self._cfg.get("model", {}).get("lora", {})
+        if lora_cfg and lora_cfg.get("name"):
+            for node in workflow.values():
+                if node.get("class_type") == "LoraLoader":
+                    node["inputs"]["lora_name"] = lora_cfg["name"]
+                    if "strength_model" in lora_cfg:
+                        node["inputs"]["strength_model"] = lora_cfg["strength_model"]
+                    if "strength_clip" in lora_cfg:
+                        node["inputs"]["strength_clip"] = lora_cfg["strength_clip"]
+                    break
+
+        # Upload input image
+        if input_image_path and os.path.exists(input_image_path):
+            uploaded_name = self._upload_image(input_image_path)
+            if uploaded_name:
+                for node in workflow.values():
+                    if node.get("class_type") == "LoadImage":
+                        node["inputs"]["image"] = uploaded_name
+                        break
+
+        previous_temp_files = self._snapshot_temp_files()
+
+        p = {"prompt": workflow}
+        try:
+            http_res = requests.post(
+                f"http://{self.server_address}/prompt",
+                json=p, timeout=30,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(f"无法连接 ComfyUI: {e}")
+
+        if http_res.status_code != 200:
+            try:
+                error_body = http_res.json()
+            except Exception:
+                error_body = http_res.text[:500]
+            raise RuntimeError(
+                f"ComfyUI 返回 HTTP {http_res.status_code}\n  响应内容: {json.dumps(error_body, ensure_ascii=False)[:1000]}"
+            )
+
+        res = http_res.json()
+        if "prompt_id" not in res:
+            error_msg = res.get("error", {})
+            detail = error_msg.get("message", str(error_msg)) if error_msg else "unknown"
+            raise RuntimeError(f"ComfyUI 工作流提交失败: {detail}")
+
+        prompt_id = res["prompt_id"]
+
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            history_res = requests.get(
+                f"http://{self.server_address}/history/{prompt_id}",
+                timeout=30,
+            ).json()
+
+            if prompt_id in history_res:
+                outputs = history_res[prompt_id].get("outputs", {})
+                all_frames = []
+                for node_id, output_node in self._iter_preferred_output_nodes(outputs, workflow):
+                    if "images" in output_node:
+                        for image_info in output_node["images"]:
+                            local = (self._resolve_local_output_path(image_info)
+                                     or self._download_image(image_info, prompt_id))
+                            if local and os.path.exists(local):
+                                all_frames.append(local)
+
+                if all_frames:
+                    all_frames.sort(key=lambda p: (
+                        os.path.basename(p),
+                        os.path.getmtime(p),
+                    ))
+                    return all_frames
+
+                if history_res[prompt_id].get("status", {}).get("completed"):
+                    return []
+
+            time.sleep(0.5)
+
+        return []
