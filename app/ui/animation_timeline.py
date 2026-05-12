@@ -11,8 +11,12 @@ from app.core.protocol import (
     AnimPlay, AnimPause, AnimStop, AnimSetLoop, AnimSeek,
     AnimAddKeyframe, AnimRemoveKeyframe, AnimExport,
 )
+from app.core.animation import EASING_FUNCTIONS
+from app.ui.theme import (PRIMARY, CANVAS, INK, SURFACE_TILE_1,
+                          font_css, ROUNDED, rgba)
+from app.ui.widgets import StyledButton
 
-EASING_OPTIONS = ["linear", "ease-in", "ease-out", "ease-in-out"]
+EASING_OPTIONS = list(EASING_FUNCTIONS.keys())
 
 TRACK_HEIGHT = 50
 KEYFRAME_SIZE = 10
@@ -71,11 +75,12 @@ class TimeAxisTrack(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
 
         # Background
-        p.fillRect(self.rect(), QColor(30, 30, 30))
+        p.fillRect(self.rect(), QColor(SURFACE_TILE_1))
 
         # Time ruler ticks
         pen = QPen(QColor(100, 100, 100))
         p.setPen(pen)
+        p.setFont(QFont("Segoe UI Variable", 9))
         y_base = TRACK_HEIGHT
         for i in range(int(self._duration) + 1):
             x = self._time_to_x(float(i))
@@ -110,8 +115,6 @@ class TimeAxisTrack(QWidget):
         ph_x = self._time_to_x(self._playhead)
         p.setPen(QPen(QColor(255, 80, 80), PLAYHEAD_WIDTH))
         p.drawLine(int(ph_x), 4, int(ph_x), TRACK_HEIGHT + TICK_HEIGHT)
-
-        p.end()
 
     # ── mouse ──
 
@@ -178,33 +181,47 @@ class AnimationTimeline(QWidget):
 
         # ── toolbar ──
         toolbar = QHBoxLayout()
+
+        transport_style = f"""
+            QPushButton {{
+                background: {rgba(INK, 0.08)}; color: {INK};
+                border: none; border-radius: {ROUNDED['sm']};
+                font-size: 16px; padding: 2px 0;
+            }}
+            QPushButton:hover {{ background: {rgba(INK, 0.15)}; }}
+            QPushButton:checked {{ background: {PRIMARY}; color: {CANVAS}; }}
+        """
+
         self._play_btn = QPushButton("▶")
         self._play_btn.setFixedSize(32, 28)
+        self._play_btn.setStyleSheet(transport_style)
         self._play_btn.clicked.connect(self._on_play)
         toolbar.addWidget(self._play_btn)
 
         self._stop_btn = QPushButton("⏹")
         self._stop_btn.setFixedSize(32, 28)
+        self._stop_btn.setStyleSheet(transport_style)
         self._stop_btn.clicked.connect(self._on_stop)
         toolbar.addWidget(self._stop_btn)
 
         self._loop_btn = QPushButton("🔁")
         self._loop_btn.setFixedSize(32, 28)
         self._loop_btn.setCheckable(True)
+        self._loop_btn.setStyleSheet(transport_style)
         self._loop_btn.clicked.connect(self._on_loop)
         toolbar.addWidget(self._loop_btn)
 
         toolbar.addSpacing(12)
         self._time_label = QLabel("0.00s / 2.00s")
-        self._time_label.setStyleSheet("color: #ccc; font-size: 12px;")
+        self._time_label.setStyleSheet(f"color: {INK}; {font_css('caption')}")
         toolbar.addWidget(self._time_label)
 
         toolbar.addStretch()
-        add_kf_btn = QPushButton("添加关键帧")
+        add_kf_btn = StyledButton("添加关键帧", "utility")
         add_kf_btn.clicked.connect(self._on_add_keyframe)
         toolbar.addWidget(add_kf_btn)
 
-        export_btn = QPushButton("导出")
+        export_btn = StyledButton("导出", "ghost")
         export_btn.clicked.connect(self._on_export)
         toolbar.addWidget(export_btn)
 
@@ -270,7 +287,7 @@ class AnimationTimeline(QWidget):
         self._easing_combo.currentTextChanged.connect(self._on_property_changed)
         prop_layout.addWidget(self._easing_combo)
 
-        del_kf_btn = QPushButton("删除关键帧")
+        del_kf_btn = StyledButton("删除关键帧", "ghost-destructive")
         del_kf_btn.clicked.connect(self._on_delete_keyframe)
         prop_layout.addWidget(del_kf_btn)
 
@@ -309,7 +326,10 @@ class AnimationTimeline(QWidget):
             self._load_keyframe_to_panel(self._keyframes[self._selected_idx])
 
     def _load_keyframe_to_panel(self, kf):
-        self._suppress_property_change = True
+        for w in (self._spin_ox, self._spin_oy, self._spin_rot,
+                  self._spin_scale, self._spin_opacity):
+            w.blockSignals(True)
+        self._easing_combo.blockSignals(True)
         self._spin_ox.setValue(kf.get("offset_x", 0.0))
         self._spin_oy.setValue(kf.get("offset_y", 0.0))
         self._spin_rot.setValue(kf.get("rotation", 0.0))
@@ -317,7 +337,10 @@ class AnimationTimeline(QWidget):
         self._spin_opacity.setValue(kf.get("opacity", 1.0))
         idx = EASING_OPTIONS.index(kf.get("easing", "linear"))
         self._easing_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self._suppress_property_change = False
+        for w in (self._spin_ox, self._spin_oy, self._spin_rot,
+                  self._spin_scale, self._spin_opacity):
+            w.blockSignals(False)
+        self._easing_combo.blockSignals(False)
 
     def _enable_property_panel(self, enabled):
         for w in (self._spin_ox, self._spin_oy, self._spin_rot,
@@ -385,8 +408,6 @@ class AnimationTimeline(QWidget):
         ))
 
     def _on_property_changed(self):
-        if getattr(self, '_suppress_property_change', False):
-            return
         if self._selected_idx < 0 or self._selected_idx >= len(self._keyframes):
             return
         kf = self._keyframes[self._selected_idx]
@@ -430,17 +451,17 @@ class ExportDialog(QDialog):
         self._path_edit = QLineEdit()
         self._path_edit.setPlaceholderText("选择保存路径...")
         path_layout.addWidget(self._path_edit)
-        browse_btn = QPushButton("浏览")
+        browse_btn = StyledButton("浏览", "utility")
         browse_btn.clicked.connect(self._browse)
         path_layout.addWidget(browse_btn)
         layout.addRow("保存到:", path_layout)
 
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        cancel_btn = QPushButton("取消")
+        cancel_btn = StyledButton("取消", "utility")
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
-        ok_btn = QPushButton("导出")
+        ok_btn = StyledButton("导出", "primary")
         ok_btn.clicked.connect(self._validate)
         btn_layout.addWidget(ok_btn)
         layout.addRow(btn_layout)

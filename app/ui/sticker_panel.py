@@ -6,6 +6,9 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from app.ui.widgets import _bgra_to_qpixmap
+from app.ui.theme import (PRIMARY, CANVAS, PARCHMENT, INK, INK_MUTED_48,
+                          HAIRLINE, DIVIDER_SOFT, DESTRUCTIVE,
+                          font_css, ROUNDED, rgba)
 
 
 class ActiveStickerCard(QWidget):
@@ -29,7 +32,7 @@ class ActiveStickerCard(QWidget):
         self.thumb_label.setFixedSize(72, 72)
         self.thumb_label.setAlignment(Qt.AlignCenter)
         self.thumb_label.setStyleSheet(
-            "background: #f0f0f5; border: 2px solid #ddd;"
+            f"background: {DIVIDER_SOFT}; border: 2px solid {HAIRLINE}; border-radius: {ROUNDED['xs']};"
         )
         if thumb_bgra is not None:
             pix = _bgra_to_qpixmap(thumb_bgra)
@@ -43,7 +46,7 @@ class ActiveStickerCard(QWidget):
         self.region_label = QLabel(region_label)
         self.region_label.setAlignment(Qt.AlignCenter)
         self.region_label.setStyleSheet(
-            "color: #888; font-size: 10px; background: transparent; border: none;"
+            f"color: {INK_MUTED_48}; {font_css('micro-legal')} background: transparent; border: none;"
         )
         layout.addWidget(self.region_label)
 
@@ -52,9 +55,9 @@ class ActiveStickerCard(QWidget):
         self._remove_btn.setFixedSize(16, 16)
         self._remove_btn.setCursor(Qt.PointingHandCursor)
         self._remove_btn.setStyleSheet(
-            "QPushButton { background: rgba(0,0,0,0.5); color: white; border: none; "
-            "font-size: 14px; font-weight: bold; }"
-            "QPushButton:hover { background: #ef4444; }"
+            f"QPushButton {{ background: {rgba(INK, 0.5)}; color: {CANVAS}; border: none; "
+            f"font-size: 14px; font-weight: bold; border-radius: {ROUNDED['full']}; }}"
+            f"QPushButton:hover {{ background: {DESTRUCTIVE}; }}"
         )
         self._remove_btn.move(66, 0)
         self._remove_btn.clicked.connect(lambda: self.removed.emit(self.instance_id))
@@ -63,11 +66,11 @@ class ActiveStickerCard(QWidget):
         self._is_edit_target = is_target
         if is_target:
             self.thumb_label.setStyleSheet(
-                "background: #f0f0f5; border: 3px solid #10b981;"
+                f"background: {DIVIDER_SOFT}; border: 3px solid {PRIMARY}; border-radius: {ROUNDED['xs']};"
             )
         else:
             self.thumb_label.setStyleSheet(
-                "background: #f0f0f5; border: 2px solid #ddd;"
+                f"background: {DIVIDER_SOFT}; border: 2px solid {HAIRLINE}; border-radius: {ROUNDED['xs']};"
             )
 
     def mousePressEvent(self, event):
@@ -87,7 +90,7 @@ class ActiveStickersPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(96)
-        self.setStyleSheet("background: #f5f5f8; border: none;")
+        self.setStyleSheet(f"background: {PARCHMENT}; border: none;")
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -97,11 +100,11 @@ class ActiveStickersPanel(QWidget):
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll.setWidgetResizable(True)
-        self._scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollBar:vertical { background: #f5f5f5; width: 6px; }
-            QScrollBar::handle:vertical { background: #ccc; min-height: 20px; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ background: transparent; border: none; }}
+            QScrollBar:vertical {{ background: transparent; width: 6px; }}
+            QScrollBar::handle:vertical {{ background: {rgba(INK, 0.15)}; min-height: 20px; border-radius: 3px; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
 
         self._container = QWidget()

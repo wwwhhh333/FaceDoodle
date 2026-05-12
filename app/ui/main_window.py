@@ -8,6 +8,10 @@ from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 
 from app.ui.widgets import (ThumbnailCard, StyledButton, GradientBar,
                             GalleryScrollArea, REGION_OPTIONS, PRESET_COLORS)
+from app.ui.theme import (PRIMARY, CANVAS, PARCHMENT, INK,
+                          INK_MUTED_48, INK_MUTED_80, HAIRLINE,
+                          DESTRUCTIVE, font_css, ROUNDED, rgba,
+                          global_stylesheet)
 from app.ui.drawing_widgets import DrawingDialog
 from app.ui.sticker_panel import ActiveStickersPanel
 from app.ui.animation_timeline import AnimationTimeline
@@ -129,26 +133,7 @@ class FaceDoodleWindow(QMainWindow):
         self.video_thread.start()
 
     def _init_stylesheet(self):
-        self.setStyleSheet("""
-            QMainWindow { background: #f5f5f8; }
-            QWidget { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
-            QLineEdit {
-                background: #fff;
-                color: #333;
-                border: 2px solid #ddd;
-                padding: 12px 18px;
-                font-size: 16px;
-            }
-            QLineEdit:focus { border-color: #667eea; }
-            QLineEdit:disabled { background: #f0f0f0; color: #bbb; }
-            QLabel { color: #444; }
-            QMessageBox { background: #fff; }
-            QMessageBox QLabel { color: #333; }
-            QMessageBox QPushButton {
-                background: #667eea; color: white;
-                padding: 8px 24px; font-size: 14px;
-            }
-        """)
+        self.setStyleSheet(global_stylesheet())
 
     def _init_ui(self):
         central = QWidget()
@@ -159,15 +144,15 @@ class FaceDoodleWindow(QMainWindow):
 
         # ── 1. 顶栏 ──
         top_bar = GradientBar("FaceDoodle AI 贴纸工坊")
-        settings_btn = QPushButton("⚙️")
-        settings_btn.setFixedSize(40, 40)
+        settings_btn = QPushButton("⚙")
+        settings_btn.setFixedSize(36, 36)
         settings_btn.setCursor(Qt.PointingHandCursor)
-        settings_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(255,255,255,0.15); color: white; border: none;
-                font-size: 20px;
-            }
-            QPushButton:hover { background: rgba(255,255,255,0.3); }
+        settings_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {INK_MUTED_80}; border: none;
+                font-size: 18px;
+            }}
+            QPushButton:hover {{ background: {rgba(INK, 0.08)}; border-radius: {ROUNDED['full']}; }}
         """)
         settings_btn.clicked.connect(self._show_settings)
         top_bar.add_right_widget(settings_btn)
@@ -181,14 +166,16 @@ class FaceDoodleWindow(QMainWindow):
         # 左侧边栏 — 已添加到面部的贴纸
         left_panel = QWidget()
         left_panel.setFixedWidth(100)
-        left_panel.setStyleSheet("background: #fafafa; border: none;")
+        left_panel.setStyleSheet(f"background: {PARCHMENT}; border: none;")
         lp_layout = QVBoxLayout(left_panel)
         lp_layout.setContentsMargins(4, 8, 4, 8)
         lp_layout.setSpacing(4)
 
         left_title = QLabel("面部贴纸")
         left_title.setAlignment(Qt.AlignCenter)
-        left_title.setStyleSheet("color: #999; font-size: 10px; font-weight: bold; background: transparent; border: none; padding-bottom: 4px;")
+        left_title.setStyleSheet(
+            f"color: {INK_MUTED_48}; {font_css('caption-strong')} background: transparent; border: none; padding-bottom: 4px;"
+        )
         lp_layout.addWidget(left_title)
 
         self.active_panel = ActiveStickersPanel()
@@ -203,7 +190,7 @@ class FaceDoodleWindow(QMainWindow):
 
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setStyleSheet("background: #e8e8ee; border: none;")
+        self.video_label.setStyleSheet(f"background: {CANVAS}; border: none;")
         self.video_label.setMinimumSize(800, 500)
         self.video_label.setMouseTracking(True)
         self.video_label.setTabletTracking(True)
@@ -213,7 +200,7 @@ class FaceDoodleWindow(QMainWindow):
         # 右侧面板 — 贴纸库
         right_panel = QWidget()
         right_panel.setFixedWidth(210)
-        right_panel.setStyleSheet("background: #fafafa; border: none;")
+        right_panel.setStyleSheet(f"background: {PARCHMENT}; border: none;")
         rp_layout = QVBoxLayout(right_panel)
         rp_layout.setContentsMargins(8, 12, 8, 8)
         rp_layout.setSpacing(6)
@@ -225,11 +212,14 @@ class FaceDoodleWindow(QMainWindow):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(
-                "QPushButton { background: #eee; color: #888; border: none; padding: 5px 0; font-size: 12px; font-weight: bold; }"
-                "QPushButton:hover { background: #e0e0e0; color: #555; }"
-                "QPushButton:checked { background: #667eea; color: white; }"
-            )
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {INK_MUTED_48};
+                    border: none; padding: 6px 0; {font_css('caption-strong')}
+                }}
+                QPushButton:hover {{ color: {INK}; }}
+                QPushButton:checked {{ background: {PRIMARY}; color: {CANVAS}; border-radius: {ROUNDED['pill']}; }}
+            """)
             btn.clicked.connect(lambda checked, k=key: self._on_filter_changed(k))
             filter_row.addWidget(btn, stretch=1)
             self._filter_btns[key] = btn
@@ -241,32 +231,16 @@ class FaceDoodleWindow(QMainWindow):
 
         self.sticker_count_label = QLabel("")
         self.sticker_count_label.setStyleSheet(
-            "color: #888; font-size: 11px; background: transparent; border: none;"
+            f"color: {INK_MUTED_48}; {font_css('fine-print')} background: transparent; border: none;"
         )
         rp_layout.addWidget(self.sticker_count_label)
 
-        # Add to Face button
-        self.add_to_face_btn = QPushButton("添加到面部")
-        self.add_to_face_btn.setCursor(Qt.PointingHandCursor)
-        self.add_to_face_btn.setStyleSheet(
-            "QPushButton { background: #667eea; color: white; border: none; "
-            "padding: 6px 0; font-size: 12px; font-weight: bold; }"
-            "QPushButton:hover { background: #818cf8; }"
-            "QPushButton:disabled { background: #ddd; color: #999; }"
-        )
+        self.add_to_face_btn = StyledButton("添加到面部", "primary")
         self.add_to_face_btn.clicked.connect(self._on_add_selected_to_face)
         self.add_to_face_btn.setEnabled(False)
         rp_layout.addWidget(self.add_to_face_btn)
 
-        # AI Animation button
-        self.ai_anim_btn = QPushButton("AI 动画")
-        self.ai_anim_btn.setCursor(Qt.PointingHandCursor)
-        self.ai_anim_btn.setStyleSheet(
-            "QPushButton { background: #7c3aed; color: white; border: none; "
-            "padding: 6px 0; font-size: 12px; font-weight: bold; }"
-            "QPushButton:hover { background: #a855f7; }"
-            "QPushButton:disabled { background: #ddd; color: #999; }"
-        )
+        self.ai_anim_btn = StyledButton("AI 动画", "primary")
         self.ai_anim_btn.clicked.connect(self._on_ai_animate)
         self.ai_anim_btn.setEnabled(False)
         rp_layout.addWidget(self.ai_anim_btn)
@@ -276,8 +250,8 @@ class FaceDoodleWindow(QMainWindow):
 
         self.edit_indicator = QLabel("编辑模式: 开启", self)
         self.edit_indicator.setStyleSheet(
-            "color: #059669; background: rgba(255,255,255,230); font-size: 14px; "
-            "padding: 6px 14px; border: 1px solid #10b981;"
+            f"color: {PRIMARY}; background: {CANVAS}; {font_css('caption')} "
+            f"padding: 6px 14px; border: 1px solid {PRIMARY}; border-radius: {ROUNDED['pill']};"
         )
         self.edit_indicator.setAlignment(Qt.AlignCenter)
         self.edit_indicator.setVisible(False)
@@ -289,7 +263,7 @@ class FaceDoodleWindow(QMainWindow):
 
         # ── 3. 输入区 ──
         input_row = QWidget()
-        input_row.setStyleSheet("background: #fff; border-top: 1px solid #eee;")
+        input_row.setStyleSheet(f"background: {CANVAS}; border-top: 1px solid {HAIRLINE};")
         input_layout = QHBoxLayout(input_row)
         input_layout.setContentsMargins(16, 12, 16, 12)
         input_layout.setSpacing(12)
@@ -302,6 +276,7 @@ class FaceDoodleWindow(QMainWindow):
         self.style_combo = QComboBox()
         self.style_combo.setMinimumWidth(110)
         self.style_combo.setToolTip("选择生成风格预设")
+        self.style_combo.setStyleSheet(f"QComboBox {{ {font_css('body')} }}")
         self._populate_style_combo()
         self.style_combo.currentIndexChanged.connect(self._on_style_changed)
         input_layout.addWidget(self.style_combo)
@@ -309,13 +284,14 @@ class FaceDoodleWindow(QMainWindow):
         self.symmetry_check = QCheckBox("对称模式")
         self.symmetry_check.setToolTip("启用后在提示词中添加对称性关键词")
         self.symmetry_check.setCursor(Qt.PointingHandCursor)
+        self.symmetry_check.setStyleSheet(f"QCheckBox {{ {font_css('body')} }}")
         self.symmetry_check.stateChanged.connect(self._on_symmetry_toggled)
         input_layout.addWidget(self.symmetry_check)
 
         cfg = get_config()
         self.symmetry_check.setChecked(cfg.get("generation", {}).get("symmetry_enabled", False))
 
-        self.send_btn = StyledButton("生成贴纸", "#2c2c2c", "#444")
+        self.send_btn = StyledButton("生成贴纸", "primary")
         self.send_btn.clicked.connect(self.send_command)
         input_layout.addWidget(self.send_btn)
 
@@ -323,64 +299,64 @@ class FaceDoodleWindow(QMainWindow):
 
         # ── 4. 操作按钮区 ──
         action_row = QWidget()
-        action_row.setStyleSheet("background: #fff; border-top: 1px solid #eee;")
+        action_row.setStyleSheet(f"background: {CANVAS}; border-top: 1px solid {HAIRLINE};")
         action_layout = QHBoxLayout(action_row)
         action_layout.setContentsMargins(16, 8, 16, 10)
         action_layout.setSpacing(10)
 
-        self.merge_btn = StyledButton("合并", "#f59e0b", "#fbbf24")
+        self.merge_btn = StyledButton("合并", "ghost")
         self.merge_btn.setEnabled(False)
         self.merge_btn.clicked.connect(self._on_merge_group)
         action_layout.addWidget(self.merge_btn)
 
         sep_merge = QWidget()
         sep_merge.setFixedWidth(1)
-        sep_merge.setStyleSheet("background: #ddd; border: none; margin: 0 6px;")
+        sep_merge.setStyleSheet(f"background: {HAIRLINE}; border: none; margin: 0 6px;")
         action_layout.addWidget(sep_merge)
 
-        self.edit_btn = StyledButton("编辑", "#7c3aed", "#a855f7")
+        self.edit_btn = StyledButton("编辑", "checkable")
         self.edit_btn.setCheckable(True)
         self.edit_btn.clicked.connect(self._toggle_edit_mode)
         action_layout.addWidget(self.edit_btn)
 
-        self.face_draw_btn = StyledButton("面部绘制", "#e11d48", "#fb7185")
+        self.face_draw_btn = StyledButton("面部绘制", "checkable")
         self.face_draw_btn.setCheckable(True)
         self.face_draw_btn.clicked.connect(self._toggle_face_draw_mode)
         action_layout.addWidget(self.face_draw_btn)
 
-        self.reset_btn = StyledButton("重置", "#94a3b8", "#b0bec5")
+        self.reset_btn = StyledButton("重置", "utility")
         self.reset_btn.clicked.connect(lambda: self.adjustment_queue.put(AdjReset()))
         action_layout.addWidget(self.reset_btn)
 
         sep1 = QWidget()
         sep1.setFixedWidth(1)
-        sep1.setStyleSheet("background: #ddd; border: none; margin: 0 6px;")
+        sep1.setStyleSheet(f"background: {HAIRLINE}; border: none; margin: 0 6px;")
         action_layout.addWidget(sep1)
 
-        self.fav_btn = StyledButton("收藏", "#f59e0b", "#fbbf24")
+        self.fav_btn = StyledButton("收藏", "ghost")
         self.fav_btn.clicked.connect(self._toggle_favorite)
         action_layout.addWidget(self.fav_btn)
 
-        self.del_btn = StyledButton("删除", "#ef4444", "#f87171")
+        self.del_btn = StyledButton("删除", "ghost-destructive")
         self.del_btn.clicked.connect(self._delete_current_sticker)
         action_layout.addWidget(self.del_btn)
 
         sep2 = QWidget()
         sep2.setFixedWidth(1)
-        sep2.setStyleSheet("background: #ddd; border: none; margin: 0 6px;")
+        sep2.setStyleSheet(f"background: {HAIRLINE}; border: none; margin: 0 6px;")
         action_layout.addWidget(sep2)
 
         action_layout.addStretch()
 
-        self.import_btn = StyledButton("导入图片", "#06b6d4", "#22d3ee")
+        self.import_btn = StyledButton("导入图片", "ghost")
         self.import_btn.clicked.connect(self._import_image)
         action_layout.addWidget(self.import_btn)
 
-        self.draw_btn = StyledButton("绘制贴纸", "#10b981", "#34d399")
+        self.draw_btn = StyledButton("绘制贴纸", "primary")
         self.draw_btn.clicked.connect(self._open_drawing_dialog)
         action_layout.addWidget(self.draw_btn)
 
-        self.edit_sticker_btn = StyledButton("编辑贴纸", "#6366f1", "#818cf8")
+        self.edit_sticker_btn = StyledButton("编辑贴纸", "ghost")
         self.edit_sticker_btn.clicked.connect(self._open_edit_sticker_dialog)
         action_layout.addWidget(self.edit_sticker_btn)
 
@@ -393,7 +369,7 @@ class FaceDoodleWindow(QMainWindow):
         # ── 5. 状态栏 ──
         self.status_label = QLabel("Ctrl+E 编辑 | Ctrl+D 面部绘制 | 左键移动 右键旋转 滚轮缩放 双击重置")
         self.status_label.setStyleSheet(
-            "color: #999; font-size: 12px; padding: 5px; background: #f0f0f5; border: none;"
+            f"color: {INK_MUTED_48}; {font_css('fine-print')} padding: 5px; background: {CANVAS}; border-top: 1px solid {HAIRLINE};"
         )
         self.status_label.setAlignment(Qt.AlignCenter)
         root.addWidget(self.status_label)
@@ -424,20 +400,20 @@ class FaceDoodleWindow(QMainWindow):
 
         self.face_draw_toolbar = QWidget()
         self.face_draw_toolbar.setVisible(False)
-        self.face_draw_toolbar.setStyleSheet("background: #fafafa; border-top: 1px solid #eee;")
+        self.face_draw_toolbar.setStyleSheet(f"background: {PARCHMENT}; border-top: 1px solid {HAIRLINE};")
         tb_layout = QHBoxLayout(self.face_draw_toolbar)
         tb_layout.setContentsMargins(12, 6, 12, 6)
         tb_layout.setSpacing(8)
 
+        label_style = f"color: {INK_MUTED_80}; {font_css('caption')} background: transparent; border: none;"
+        value_label_style = f"color: {INK_MUTED_80}; {font_css('fine-print')} background: transparent; border: none;"
+
         # Region 选择
         region_label = QLabel("位置:")
-        region_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        region_label.setStyleSheet(label_style)
         tb_layout.addWidget(region_label)
 
         self._draw_region_combo = QComboBox()
-        self._draw_region_combo.setStyleSheet(
-            "QComboBox { background: #fff; border: 1px solid #ddd; padding: 4px 8px; font-size: 13px; color: #333; }"
-        )
         for label, value in REGION_OPTIONS:
             self._draw_region_combo.addItem(label, value)
         self._draw_region_combo.currentIndexChanged.connect(self._on_draw_region_changed)
@@ -447,73 +423,61 @@ class FaceDoodleWindow(QMainWindow):
 
         # 笔刷大小
         size_label = QLabel("粗细:")
-        size_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        size_label.setStyleSheet(label_style)
         tb_layout.addWidget(size_label)
 
         self._draw_brush_slider = QSlider(Qt.Horizontal)
         self._draw_brush_slider.setRange(1, 50)
         self._draw_brush_slider.setValue(12)
         self._draw_brush_slider.setFixedWidth(100)
-        self._draw_brush_slider.setStyleSheet(
-            "QSlider::groove:horizontal { background: #ddd; height: 4px; }"
-            "QSlider::handle:horizontal { background: #e11d48; width: 14px; margin: -5px 0; }"
-        )
         self._draw_brush_slider.valueChanged.connect(self._on_draw_brush_size_changed)
         tb_layout.addWidget(self._draw_brush_slider)
 
         self._brush_size_label = QLabel("12px")
-        self._brush_size_label.setStyleSheet("color: #666; font-size: 12px; background: transparent; border: none; min-width: 32px;")
+        self._brush_size_label.setStyleSheet(value_label_style + " min-width: 32px;")
         tb_layout.addWidget(self._brush_size_label)
 
         tb_layout.addSpacing(8)
 
         # 间距
         spacing_label = QLabel("间距:")
-        spacing_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        spacing_label.setStyleSheet(label_style)
         tb_layout.addWidget(spacing_label)
 
         self._draw_spacing_slider = QSlider(Qt.Horizontal)
         self._draw_spacing_slider.setRange(3, 200)
         self._draw_spacing_slider.setValue(30)
         self._draw_spacing_slider.setFixedWidth(80)
-        self._draw_spacing_slider.setStyleSheet(
-            "QSlider::groove:horizontal { background: #ddd; height: 4px; }"
-            "QSlider::handle:horizontal { background: #e11d48; width: 12px; margin: -4px 0; }"
-        )
         self._draw_spacing_slider.valueChanged.connect(self._on_draw_spacing_changed)
         tb_layout.addWidget(self._draw_spacing_slider)
 
         self._spacing_value_label = QLabel("0.30")
-        self._spacing_value_label.setStyleSheet("color: #666; font-size: 11px; background: transparent; border: none; min-width: 28px;")
+        self._spacing_value_label.setStyleSheet(value_label_style + " min-width: 28px;")
         tb_layout.addWidget(self._spacing_value_label)
 
         tb_layout.addSpacing(8)
 
         # 散射
         scatter_label = QLabel("散射:")
-        scatter_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        scatter_label.setStyleSheet(label_style)
         tb_layout.addWidget(scatter_label)
 
         self._draw_scatter_slider = QSlider(Qt.Horizontal)
         self._draw_scatter_slider.setRange(0, 30)
         self._draw_scatter_slider.setValue(0)
         self._draw_scatter_slider.setFixedWidth(80)
-        self._draw_scatter_slider.setStyleSheet(
-            "QSlider::groove:horizontal { background: #ddd; height: 4px; }"
-            "QSlider::handle:horizontal { background: #e11d48; width: 12px; margin: -4px 0; }"
-        )
         self._draw_scatter_slider.valueChanged.connect(self._on_draw_scatter_changed)
         tb_layout.addWidget(self._draw_scatter_slider)
 
         self._scatter_value_label = QLabel("0")
-        self._scatter_value_label.setStyleSheet("color: #666; font-size: 11px; background: transparent; border: none; min-width: 20px;")
+        self._scatter_value_label.setStyleSheet(value_label_style + " min-width: 20px;")
         tb_layout.addWidget(self._scatter_value_label)
 
         tb_layout.addSpacing(8)
 
         # 颜色预设
         color_label = QLabel("颜色:")
-        color_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        color_label.setStyleSheet(label_style)
         tb_layout.addWidget(color_label)
 
         for name, bgra in PRESET_COLORS:
@@ -523,8 +487,8 @@ class FaceDoodleWindow(QMainWindow):
             btn.setToolTip(name)
             r, g, b = bgra[2], bgra[1], bgra[0]
             btn.setStyleSheet(
-                f"QPushButton {{ background: rgb({r},{g},{b}); border: 1px solid #ccc; }}"
-                f"QPushButton:hover {{ border: 2px solid #333; }}"
+                f"QPushButton {{ background: rgb({r},{g},{b}); border: 1px solid {HAIRLINE}; border-radius: {ROUNDED['full']}; }}"
+                f"QPushButton:hover {{ border: 2px solid {INK}; }}"
             )
             btn.clicked.connect(lambda checked, c=bgra: self._on_draw_color_clicked(c))
             tb_layout.addWidget(btn)
@@ -533,13 +497,10 @@ class FaceDoodleWindow(QMainWindow):
 
         # 笔刷类型
         brush_label = QLabel("笔刷:")
-        brush_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        brush_label.setStyleSheet(label_style)
         tb_layout.addWidget(brush_label)
 
         self._draw_brush_combo = QComboBox()
-        self._draw_brush_combo.setStyleSheet(
-            "QComboBox { background: #fff; border: 1px solid #ddd; padding: 4px 8px; font-size: 13px; color: #333; }"
-        )
         brushes = load_brush_config()
         for b in brushes:
             self._draw_brush_combo.addItem(b["name"], b["id"])
@@ -550,13 +511,10 @@ class FaceDoodleWindow(QMainWindow):
 
         # 压感模式
         pressure_label = QLabel("压感:")
-        pressure_label.setStyleSheet("color: #666; font-size: 13px; background: transparent; border: none;")
+        pressure_label.setStyleSheet(label_style)
         tb_layout.addWidget(pressure_label)
 
         self._draw_pressure_combo = QComboBox()
-        self._draw_pressure_combo.setStyleSheet(
-            "QComboBox { background: #fff; border: 1px solid #ddd; padding: 4px 8px; font-size: 13px; color: #333; }"
-        )
         for label, mode in [("大小+浓度", "both"), ("仅大小", "size"), ("仅浓度", "opacity"), ("无压感", "none")]:
             self._draw_pressure_combo.addItem(label, mode)
         self._draw_pressure_combo.currentIndexChanged.connect(self._on_draw_pressure_mode_changed)
@@ -565,45 +523,24 @@ class FaceDoodleWindow(QMainWindow):
         tb_layout.addSpacing(8)
 
         # 橡皮擦
-        self._draw_eraser_btn = QPushButton("橡皮")
+        self._draw_eraser_btn = StyledButton("橡皮", "utility")
         self._draw_eraser_btn.setCheckable(True)
-        self._draw_eraser_btn.setCursor(Qt.PointingHandCursor)
-        self._draw_eraser_btn.setStyleSheet(
-            "QPushButton { background: #fff; color: #666; border: 1px solid #ddd; padding: 4px 10px; font-size: 13px; }"
-            "QPushButton:checked { background: #fef2f2; color: #e11d48; border-color: #e11d48; }"
-        )
         self._draw_eraser_btn.clicked.connect(self._on_draw_eraser_toggled)
         tb_layout.addWidget(self._draw_eraser_btn)
 
         tb_layout.addSpacing(4)
 
         # 撤销
-        undo_btn = QPushButton("撤销")
-        undo_btn.setCursor(Qt.PointingHandCursor)
-        undo_btn.setStyleSheet(
-            "QPushButton { background: #fff; color: #666; border: 1px solid #ddd; padding: 4px 10px; font-size: 13px; }"
-            "QPushButton:hover { background: #f5f5f5; }"
-        )
+        undo_btn = StyledButton("撤销", "utility")
         undo_btn.clicked.connect(self._on_draw_undo)
         tb_layout.addWidget(undo_btn)
 
         # 清除
-        clear_btn = QPushButton("清除")
-        clear_btn.setCursor(Qt.PointingHandCursor)
-        clear_btn.setStyleSheet(
-            "QPushButton { background: #fff; color: #666; border: 1px solid #ddd; padding: 4px 10px; font-size: 13px; }"
-            "QPushButton:hover { background: #fef2f2; color: #e11d48; }"
-        )
+        clear_btn = StyledButton("清除", "utility-danger")
         clear_btn.clicked.connect(self._on_draw_clear)
         tb_layout.addWidget(clear_btn)
 
-        # 保存
-        save_btn = QPushButton("保存")
-        save_btn.setCursor(Qt.PointingHandCursor)
-        save_btn.setStyleSheet(
-            "QPushButton { background: #e11d48; color: white; border: none; padding: 4px 14px; font-size: 13px; font-weight: bold; }"
-            "QPushButton:hover { background: #fb7185; }"
-        )
+        save_btn = StyledButton("保存", "primary")
         save_btn.clicked.connect(self._on_draw_save)
         tb_layout.addWidget(save_btn)
 
@@ -780,7 +717,7 @@ class FaceDoodleWindow(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle("选择位置")
         dlg.setFixedSize(280, 120)
-        dlg.setStyleSheet("QDialog { background: #f5f5f8; }")
+        dlg.setStyleSheet(f"QDialog {{ background: {CANVAS}; }}")
         layout = QVBoxLayout(dlg)
         layout.addWidget(QLabel("请选择贴纸应用位置:"))
         combo = QComboBox()
@@ -788,8 +725,8 @@ class FaceDoodleWindow(QMainWindow):
             combo.addItem(label, value)
         layout.addWidget(combo)
         btn_layout = QHBoxLayout()
-        ok_btn = StyledButton("确定", "#667eea", "#818cf8")
-        cancel_btn = StyledButton("取消", "#94a3b8", "#b0bec5")
+        ok_btn = StyledButton("确定", "primary")
+        cancel_btn = StyledButton("取消", "utility")
         btn_layout.addStretch()
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(ok_btn)
@@ -1137,7 +1074,7 @@ class FaceDoodleWindow(QMainWindow):
             self.input_box.setEnabled(False)
             self.send_btn.setEnabled(False)
             self._face_draw_stroke_points = []
-            self.status_label.setText("B 画笔 E 橡皮 [ ] 粗细 Ctrl+Z 撤销 C 清除 S 保存")
+            self.status_label.setText("B 画笔  E 橡皮  [ ] 粗细  Ctrl+Z 撤销  C 清除  S 保存")
         else:
             self.face_draw_toolbar.setVisible(False)
             self.edit_btn.setEnabled(True)

@@ -327,7 +327,6 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                     "offset_x": 0.0, "offset_y": 0.0,
                     "rotation": 0.0, "scale_mult": 1.0,
                 }
-                self.edit_target_id = instance_id
                 print(f"[Consumer] Mock 模式: 已加载 {temp_files[0]}")
 
     # ── frame i/o ──

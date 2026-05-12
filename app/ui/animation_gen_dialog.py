@@ -6,6 +6,11 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
 from PyQt5.QtCore import Qt
 
 from app.utils.config_loader import get_config
+from app.ui.theme import (PRIMARY, INK_MUTED_48, INK_MUTED_80,
+                          HAIRLINE, ERROR, font_css, label_css)
+from app.ui.widgets import StyledButton
+
+_ERROR_STYLESHEET = label_css('caption', ERROR)
 
 
 class AnimationGenDialog(QDialog):
@@ -38,7 +43,7 @@ class AnimationGenDialog(QDialog):
         form.addRow("FPS:", self._fps_spin)
 
         self._frame_label = QLabel("16 帧")
-        self._frame_label.setStyleSheet("color: #aaa;")
+        self._frame_label.setStyleSheet(f"color: {INK_MUTED_48};")
         form.addRow("总帧数:", self._frame_label)
 
         cfg = get_config()
@@ -46,7 +51,7 @@ class AnimationGenDialog(QDialog):
         selected = cfg.get("style", {}).get("selected_preset", "flat_vector")
         preset_name = presets.get(selected, {}).get("name", selected)
         style_label = QLabel(f"风格: {preset_name}")
-        style_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        style_label.setStyleSheet(f"color: {INK_MUTED_48}; {font_css('fine-print')}")
         form.addRow("", style_label)
 
         layout.addLayout(form)
@@ -57,10 +62,18 @@ class AnimationGenDialog(QDialog):
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setVisible(False)
+        self._progress.setStyleSheet(f"""
+            QProgressBar {{
+                border: none; background: {HAIRLINE}; height: 4px; border-radius: 2px;
+            }}
+            QProgressBar::chunk {{
+                background: {PRIMARY}; border-radius: 2px;
+            }}
+        """)
         layout.addWidget(self._progress)
 
         self._status_label = QLabel("")
-        self._status_label.setStyleSheet("color: #888; font-size: 12px;")
+        self._status_label.setStyleSheet(f"color: {INK_MUTED_80}; {font_css('caption')}")
         self._status_label.setWordWrap(True)
         layout.addWidget(self._status_label)
 
@@ -69,15 +82,11 @@ class AnimationGenDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        self._cancel_btn = QPushButton("取消")
+        self._cancel_btn = StyledButton("取消", "utility")
         self._cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self._cancel_btn)
 
-        self._gen_btn = QPushButton("生成动画")
-        self._gen_btn.setStyleSheet(
-            "QPushButton { background: #7c3aed; color: white; padding: 8px 20px; font-weight: bold; border: none; }"
-            "QPushButton:hover { background: #a855f7; }"
-        )
+        self._gen_btn = StyledButton("生成动画", "primary")
         self._gen_btn.clicked.connect(self._on_generate)
         btn_layout.addWidget(self._gen_btn)
 
@@ -103,7 +112,7 @@ class AnimationGenDialog(QDialog):
 
     def set_error(self, error_text):
         self._status_label.setText(f"错误: {error_text}")
-        self._status_label.setStyleSheet("color: #e53e3e; font-size: 12px;")
+        self._status_label.setStyleSheet(_ERROR_STYLESHEET)
         self._gen_btn.setEnabled(True)
 
     def result(self):
