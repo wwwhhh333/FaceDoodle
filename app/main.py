@@ -13,6 +13,17 @@ from app.utils.storage import load_preferences
 MOCK_MODE = "--mock" in sys.argv
 
 
+def _get_video_path(config):
+    """Resolve video path from --video CLI arg or config default."""
+    for i, arg in enumerate(sys.argv):
+        if arg == "--video":
+            if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("--"):
+                return sys.argv[i + 1]
+            # No explicit path — fall back to config default
+            return config["video"]["path"] or None
+    return None
+
+
 def _resolve_api_key(config):
     key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("MODELSCOPE_API_KEY")
     if key:
@@ -34,6 +45,10 @@ def main():
     api_key = _resolve_api_key(config)
     queue_cfg = config.get("queue", {})
     prefs = load_preferences()
+    video_path = _get_video_path(config)
+
+    if video_path:
+        print(f"[System] 视频文件模式: {video_path}")
 
     frame_queue = Queue(maxsize=queue_cfg.get("frame_maxsize", 5))
     display_queue = Queue(maxsize=queue_cfg.get("display_maxsize", 5))
@@ -46,7 +61,7 @@ def main():
 
     print(f"[System] 正在启动视频流与 AI 消费者进程... {'(Mock 模式: 跳过 ComfyUI)' if MOCK_MODE else ''}")
 
-    p_producer = Process(target=producer, args=(frame_queue, stop_event))
+    p_producer = Process(target=producer, args=(frame_queue, stop_event, video_path))
     p_consumer = Process(target=consumer, args=(
         frame_queue,
         display_queue,

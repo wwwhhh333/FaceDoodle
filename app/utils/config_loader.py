@@ -11,6 +11,10 @@ DEFAULT_CONFIG = {
         "width": 1280,
         "height": 720
     },
+    "video": {
+        "path": "",
+        "loop": True
+    },
     "queue": {
         "frame_maxsize": 5,
         "display_maxsize": 5,

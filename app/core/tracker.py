@@ -259,30 +259,56 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
 # Producer process
 # ══════════════════════════════════════════════════════════════════════════════
 
-def producer(frame_queue, stop_event):
+def producer(frame_queue, stop_event, video_path=None):
     from app.utils.config_loader import get_config
     cfg = get_config()
-    cam_cfg = cfg.get("camera", {})
 
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("[Producer] 错误：无法打开摄像头 (index 0)")
-        stop_event.set()
-        return
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_cfg.get("width", 1280))
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_cfg.get("height", 720))
+    if video_path:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"[Producer] 错误：无法打开视频文件 {video_path}")
+            stop_event.set()
+            return
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        fps = max(fps, 1.0) if fps > 0 else 30.0
+        frame_delay = 1.0 / fps
+        loop = cfg["video"]["loop"]
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        print(f"[Producer] 视频模式: {os.path.basename(video_path)} ({fps:.1f} FPS, "
+              f"{total_frames} 帧, {'循环' if loop else '单次'})")
+    else:
+        cam_cfg = cfg.get("camera", {})
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("[Producer] 错误：无法打开摄像头 (index 0)")
+            stop_event.set()
+            return
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_cfg.get("width", 1280))
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_cfg.get("height", 720))
+        frame_delay = 0
+        loop = False
 
     try:
         while not stop_event.is_set() and cap.isOpened():
+            _frame_start = time.perf_counter()
             ret, frame = cap.read()
             if not ret:
+                if video_path and loop:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
                 break
-            frame = cv2.flip(frame, 1)
+            if not video_path:
+                frame = cv2.flip(frame, 1)
             try:
                 frame_queue.put(frame, timeout=0.1)
             except Exception:
+                print("[Producer] 警告：frame_queue 已满或消费者已退出，丢弃一帧")
                 pass
+            if frame_delay > 0:
+                elapsed = time.perf_counter() - _frame_start
+                remaining = frame_delay - elapsed
+                if remaining > 0:
+                    time.sleep(remaining)
     finally:
         cap.release()
         print("[Producer] 已退出")

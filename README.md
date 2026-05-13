@@ -42,6 +42,11 @@
 - 9 张预设模板贴纸（面部轮廓、皇冠、眉心点、星星眼、鼻影、微笑、腮红、下巴点）
 - 首次启动自动生成，与用户贴纸统一管理
 
+### 视频文件测试
+- `--video <path>` 用本地视频文件代替摄像头输入，方便无摄像头时调试
+- 自动读取视频 FPS 控制播放速度，支持循环播放
+- 可与 `--mock` 结合使用，完全离线测试
+
 ### 画廊管理
 - 三个过滤标签：`模板` | `贴纸` | `收藏`
 - 点击贴纸应用到脸上，再次点击取消
@@ -71,12 +76,12 @@ Windows 下 OpenCV 不支持中文路径，PNG 文件名请用英文，笔刷名
 ## 系统架构
 
 ```
-摄像头 → Producer 进程 → Consumer 进程 → 渲染帧 → Qt UI
-                    DeepSeek API    ComfyUI
-                    (多轮对话)     (图片生成)
+摄像头/视频文件 → Producer 进程 → Consumer 进程 → 渲染帧 → Qt UI
+                         DeepSeek API    ComfyUI
+                         (多轮对话)     (图片生成)
 ```
 
-- **Producer**: 摄像头采集，30fps 帧推送到 `frame_queue`
+- **Producer**: 摄像头采集或视频文件读取，帧推送到 `frame_queue`（视频模式按 FPS 节流）
 - **Consumer**: MediaPipe 468 点面部检测 + 贴纸渲染 + AI 调度 + 动画引擎。Mixin 架构：`ConsumerProcessor(StickerManager, AnimationProcessor)`
 - **队列通信**: 7 个多进程队列 + 1 个内部 result_queue，所有消息使用 typed dataclass (`app/core/protocol.py`)
 - **UI**: PyQt5 界面，`VideoUpdateThread` 拉取 `display_queue` 帧和状态消息
@@ -87,7 +92,7 @@ Windows 下 OpenCV 不支持中文路径，PNG 文件名请用英文，笔刷名
 | 组件 | 说明 |
 |------|------|
 | Python | 3.10+ |
-| 摄像头 | 系统默认摄像头 |
+| 摄像头 | 系统默认摄像头（可用 `--video` 替代） |
 | ComfyUI | 本地运行，需 LayerDiffusion + ControlNet 节点 |
 | DeepSeek API | 自然语言解析（设置 `DEEPSEEK_API_KEY` 环境变量） |
 | 数位板（可选） | Windows Ink 兼容数位板，支持压感 |
@@ -123,6 +128,10 @@ python app/main.py
 
 # Mock 模式（跳过 ComfyUI，用缓存图片测试 UI）
 python app/main.py --mock
+
+# 视频文件模式（代替摄像头，可结合 --mock 使用）
+python app/main.py --video test_data/face_test.mp4
+python app/main.py --video test_data/face_test.mp4 --mock
 ```
 
 ## 配置
@@ -134,6 +143,8 @@ python app/main.py --mock
 | `comfyui.server_address` | `127.0.0.1:8188` | ComfyUI 服务地址 |
 | `comfyui.generate_timeout` | `120` | 生成超时（秒） |
 | `camera.width` / `camera.height` | `1280` / `720` | 摄像头分辨率 |
+| `video.path` | `""` | 视频文件模式默认路径（`--video` 无参时使用） |
+| `video.loop` | `true` | 视频播放结束后循环 |
 | `agent.model_id` | `deepseek-chat` | LLM 模型 |
 | `model.lora.name` | 贴纸 LoRA | ComfyUI LoRA 文件名 |
 | `external_editor.path` | — | 外部图片编辑器路径 |
