@@ -13,6 +13,26 @@ from urllib.parse import quote
 import requests
 
 
+TEMP_MAX_FILES = 50
+
+
+def cleanup_temp_files(output_dir="assets/temp", max_files=TEMP_MAX_FILES):
+    """Remove oldest temp files, keeping at most *max_files* most recent ones."""
+    try:
+        files = []
+        for entry in os.scandir(output_dir):
+            if entry.is_file() and entry.name.lower().endswith((".png", ".webp", ".jpg", ".jpeg")):
+                files.append((entry.stat().st_mtime, entry.path))
+        if len(files) <= max_files:
+            return
+        files.sort(key=lambda x: x[0], reverse=True)
+        for _, path in files[max_files:]:
+            os.remove(path)
+        print(f"[ComfyClient] 清理临时文件: 保留 {max_files}/{len(files) + max_files} 个")
+    except FileNotFoundError:
+        pass
+
+
 class ComfyClient:
     def __init__(self, server_address=None):
         from app.utils.config_loader import get_config

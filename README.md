@@ -103,12 +103,21 @@ Windows 下 OpenCV 不支持中文路径，PNG 文件名请用英文，笔刷名
 
 ### ComfyUI 依赖
 
-| 模型/节点 | 用途 |
-|-----------|------|
-| sdXL_v10VAEFix.safetensors | SDXL 底模 |
-| LayerDiffusion | 生成透明 PNG |
-| ControlNet Scribble | img2img 精炼 |
-| LoRA 贴纸模型 | 贴纸风格 |
+| 模型/节点 | 用途 | 下载 |
+|-----------|------|------|
+| sdXL_v10VAEFix.safetensors | SDXL 底模 | [HuggingFace](https://huggingface.co/madebyollin/sdxl-vae-fp16-fix) |
+| LayerDiffusion | 生成透明 PNG | [GitHub](https://github.com/layerdiffusion/LayerDiffuse) |
+| ControlNet Scribble | img2img 精炼 | [HuggingFace](https://huggingface.co/xinsir/controlnet-scribble-sdxl-1.0) |
+| gmic icon_Pixel style | 像素风格 LoRA | [CivitAI](https://civitai.com/models/160165/gmic-icon-pixel-style) |
+| vector_art_IL_MIX_V01 | 矢量风格 LoRA | [CivitAI](https://civitai.com/models/208905/vector-art-il-mix) |
+| gmic icon_2d cartoon icon | 卡通风格 LoRA | [CivitAI](https://civitai.com/models/159956/gmic-icon-2d-cartoon-icon) |
+| add-detail-xl | 半写实风格 LoRA | [CivitAI](https://civitai.com/models/135867/add-detail-xl) |
+
+LoRA 文件放入 ComfyUI 的 `models/loras/` 目录。
+
+### ComfyUI 自动启动
+
+在设置对话框中配置 ComfyUI 安装路径后，FaceDoodle 启动时自动拉起 ComfyUI，退出时自动关闭。留空则需手动启动。
 
 ## 快速开始
 
@@ -116,15 +125,11 @@ Windows 下 OpenCV 不支持中文路径，PNG 文件名请用英文，笔刷名
 # 1. 安装依赖
 pip install -r requirements.txt
 
-# 2. 设置 API Key（二选一，推荐方式 A）
-#    方式 A: 在项目根目录创建 api_key.txt，写入 DeepSeek key（程序只读不写，不会丢失）
-#    方式 B: 环境变量 $env:DEEPSEEK_API_KEY = "sk-your-key-here"（临时覆盖）
-cp config.example.json config.json
-
-# 3. 启动 ComfyUI
-
-# 4. 启动 FaceDoodle
+# 2. 启动 FaceDoodle（首次运行会自动弹出设置向导）
 python app/main.py
+
+# 3. 在设置向导中填入 API Key 和 ComfyUI 地址即可开始使用
+#    配置 ComfyUI 安装路径后，FaceDoodle 会自动启动/关闭 ComfyUI
 
 # Mock 模式（跳过 ComfyUI，用缓存图片测试 UI）
 python app/main.py --mock
@@ -142,6 +147,7 @@ python app/main.py --video test_data/face_test.mp4 --mock
 |--------|--------|------|
 | `comfyui.server_address` | `127.0.0.1:8188` | ComfyUI 服务地址 |
 | `comfyui.generate_timeout` | `120` | 生成超时（秒） |
+| `comfyui.install_path` | (空) | ComfyUI 安装目录，设定后自动启动 |
 | `camera.width` / `camera.height` | `1280` / `720` | 摄像头分辨率 |
 | `video.path` | `""` | 视频文件模式默认路径（`--video` 无参时使用） |
 | `video.loop` | `true` | 视频播放结束后循环 |

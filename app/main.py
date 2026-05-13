@@ -7,7 +7,7 @@ from multiprocessing import Process, Queue, Event
 from PyQt5.QtWidgets import QApplication
 from app.core.tracker import producer, consumer
 from app.ui.main_window import FaceDoodleWindow
-from app.utils.config_loader import load_config
+from app.utils.config_loader import load_config, is_first_run
 from app.utils.storage import load_preferences
 
 MOCK_MODE = "--mock" in sys.argv
@@ -22,6 +22,94 @@ def _get_video_path(config):
             # No explicit path — fall back to config default
             return config["video"]["path"] or None
     return None
+
+
+def _show_first_run_setup(current_key):
+    """Show first-run dialog for API key and ComfyUI setup. Returns (possibly updated) api_key."""
+    from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout
+    from PyQt5.QtCore import Qt
+
+    dlg = QDialog()
+    dlg.setWindowTitle("欢迎使用 FaceDoodle — 首次设置")
+    dlg.setMinimumWidth(460)
+    layout = QVBoxLayout(dlg)
+    layout.setContentsMargins(24, 20, 24, 20)
+    layout.setSpacing(14)
+
+    title = QLabel("欢迎使用 FaceDoodle AI 贴纸工坊")
+    title.setAlignment(Qt.AlignCenter)
+    title.setStyleSheet("font-size: 16px; font-weight: 700; color: #333;")
+    layout.addWidget(title)
+
+    desc = QLabel("首次运行需要配置 API Key 和 ComfyUI 地址。\n这些设置之后也可以在应用内修改。")
+    desc.setWordWrap(True)
+    desc.setAlignment(Qt.AlignCenter)
+    desc.setStyleSheet("color: #888; font-size: 12px; margin-bottom: 8px;")
+    layout.addWidget(desc)
+
+    form = QFormLayout()
+    form.setSpacing(8)
+
+    key_edit = QLineEdit(current_key or "")
+    key_edit.setPlaceholderText("sk-...")
+    key_edit.setEchoMode(QLineEdit.Password)
+    form.addRow("DeepSeek API Key", key_edit)
+
+    addr_edit = QLineEdit("127.0.0.1:8188")
+    addr_edit.setPlaceholderText("127.0.0.1:8188")
+    form.addRow("ComfyUI 地址", addr_edit)
+    layout.addLayout(form)
+
+    note = QLabel("也可以将 Key 写入项目根目录的 api_key.txt 文件（程序只读不写）\n"
+                  "或设置环境变量 DEEPSEEK_API_KEY。\n"
+                  "使用 --mock 参数可跳过 ComfyUI 以测试界面。")
+    note.setWordWrap(True)
+    note.setStyleSheet("color: #aaa; font-size: 11px;")
+    layout.addWidget(note)
+
+    btn_row = QHBoxLayout()
+    btn_row.addStretch()
+
+    skip_btn = QPushButton("跳过")
+    skip_btn.setFixedWidth(80)
+    skip_btn.clicked.connect(dlg.reject)
+    btn_row.addWidget(skip_btn)
+
+    save_btn = QPushButton("保存并开始")
+    save_btn.setFixedWidth(110)
+    save_btn.setStyleSheet(
+        "QPushButton { background: #4F46E5; color: #fff; border: none; "
+        "border-radius: 6px; padding: 8px 16px; font-weight: 600; }"
+        "QPushButton:hover { background: #4338CA; }"
+    )
+    btn_row.addWidget(save_btn)
+    layout.addLayout(btn_row)
+
+    def on_save():
+        key = key_edit.text().strip()
+        if key:
+            key_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api_key.txt")
+            try:
+                with open(key_file, "w", encoding="utf-8") as f:
+                    f.write(key)
+                print(f"[Setup] API Key 已保存到 {key_file}")
+            except OSError:
+                pass
+        from app.utils.config_loader import get_config, save_config
+        cfg = get_config()
+        addr = addr_edit.text().strip()
+        if addr:
+            cfg["comfyui"]["server_address"] = addr
+            save_config(cfg)
+        dlg.accept()
+
+    save_btn.clicked.connect(on_save)
+    key_edit.returnPressed.connect(on_save)
+
+    result = dlg.exec_()
+    if result == QDialog.Accepted:
+        return _resolve_api_key(get_config())
+    return current_key
 
 
 def _resolve_api_key(config):
@@ -41,6 +129,9 @@ def _resolve_api_key(config):
 
 
 def main():
+    from app.ai.generator import cleanup_temp_files
+    cleanup_temp_files()
+
     config = load_config()
     api_key = _resolve_api_key(config)
     queue_cfg = config.get("queue", {})
@@ -49,6 +140,13 @@ def main():
 
     if video_path:
         print(f"[System] 视频文件模式: {video_path}")
+
+    # Must create QApplication before any QWidget
+    app = QApplication(sys.argv)
+
+    # First-run setup
+    if is_first_run() or not api_key:
+        api_key = _show_first_run_setup(api_key)
 
     frame_queue = Queue(maxsize=queue_cfg.get("frame_maxsize", 5))
     display_queue = Queue(maxsize=queue_cfg.get("display_maxsize", 5))
@@ -78,8 +176,16 @@ def main():
     p_producer.start()
     p_consumer.start()
 
+    from app.ai.comfy_manager import ComfyUIManager
+    comfy_cfg = config.get("comfyui", {})
+    comfy_mgr = ComfyUIManager(
+        install_path=comfy_cfg.get("install_path", ""),
+        server_address=comfy_cfg.get("server_address", "127.0.0.1:8188"),
+    )
+    if not MOCK_MODE:
+        comfy_mgr.start()
+
     print("[System] 正在启动图形界面...")
-    app = QApplication(sys.argv)
     window = FaceDoodleWindow(display_queue, command_queue, adjustment_queue, gallery_queue, draw_queue, animation_queue)
 
     w = prefs.get("window_width", 1280)
@@ -99,6 +205,8 @@ def main():
         p_producer.terminate()
     if p_consumer.is_alive():
         p_consumer.terminate()
+
+    comfy_mgr.stop()
 
     sys.exit(exit_code)
 

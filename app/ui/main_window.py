@@ -761,28 +761,42 @@ class FaceDoodleWindow(QMainWindow):
         self._reenable_input()
 
     def _toggle_favorite(self):
-        if not self._current_sticker_id:
+        ids = self._batch_target_ids()
+        if not ids:
             return
-        stickers = storage.load_gallery()
-        entry = next((s for s in stickers if s["id"] == self._current_sticker_id), None)
+        stickers, _ = storage.load_index_data()
+        entry = next((s for s in stickers if s["id"] == ids[0]), None)
         if entry is None:
             return
         new_fav = not entry.get("favorite", False)
-        storage.set_favorite(self._current_sticker_id, new_fav)
+        for sid in ids:
+            storage.set_favorite(sid, new_fav)
         self._load_gallery()
 
     def _delete_current_sticker(self):
-        if not self._current_sticker_id:
+        ids = self._batch_target_ids()
+        if not ids:
             return
+        n = len(ids)
+        msg = f"确定要删除选中的 {n} 枚贴纸吗？此操作不可恢复。" if n > 1 else "确定要删除这枚贴纸吗？此操作不可恢复。"
         reply = QMessageBox.question(
-            self, "确认删除", "确定要删除这枚贴纸吗？此操作不可恢复。",
+            self, "确认删除", msg,
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            storage.delete_sticker(self._current_sticker_id)
+            for sid in ids:
+                storage.delete_sticker(sid)
             self._current_sticker_id = None
             self.gallery_queue.put(GalLoadSticker(sticker_id=None))
             self._load_gallery()
+
+    def _batch_target_ids(self):
+        """Return list of sticker IDs to operate on: selected if multi, else current."""
+        if len(self._gallery_selected_ids) >= 2:
+            return [sid for sid in self._gallery_selected_ids if sid not in self._template_cards]
+        if self._current_sticker_id:
+            return [self._current_sticker_id]
+        return []
 
     def _import_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -950,6 +964,9 @@ class FaceDoodleWindow(QMainWindow):
         timeout_spin.setValue(cfg["comfyui"]["generate_timeout"])
         timeout_spin.setSuffix(" 秒")
         form_comfy.addRow("生成超时", timeout_spin)
+        install_edit = QLineEdit(cfg["comfyui"].get("install_path", ""))
+        install_edit.setPlaceholderText("留空则手动启动 ComfyUI")
+        form_comfy.addRow("安装路径", install_edit)
         layout.addWidget(grp_comfy)
 
         # ── AI ──
@@ -1020,6 +1037,7 @@ class FaceDoodleWindow(QMainWindow):
         def on_save():
             cfg["comfyui"]["server_address"] = addr_edit.text().strip()
             cfg["comfyui"]["generate_timeout"] = timeout_spin.value()
+            cfg["comfyui"]["install_path"] = install_edit.text().strip()
             cfg["agent"]["model_id"] = model_combo.currentText().strip()
             cfg["model"]["lora"]["name"] = lora_edit.text().strip()
             cfg["model"]["lora"]["strength_model"] = lora_sm.value()

@@ -5,7 +5,8 @@ import os
 DEFAULT_CONFIG = {
     "comfyui": {
         "server_address": "127.0.0.1:8188",
-        "generate_timeout": 120
+        "generate_timeout": 120,
+        "install_path": ""
     },
     "camera": {
         "width": 1280,
@@ -85,8 +86,17 @@ DEFAULT_CONFIG = {
 _config = None
 
 
+def is_first_run(config_path="config.json"):
+    return not os.path.exists(config_path)
+
+
 def load_config(config_path="config.json"):
     global _config
+    first_run = is_first_run(config_path)
+
+    if first_run:
+        _seed_from_example(config_path)
+
     config = copy.deepcopy(DEFAULT_CONFIG)
 
     if os.path.exists(config_path):
@@ -100,6 +110,18 @@ def load_config(config_path="config.json"):
 
     _config = config
     return config
+
+
+def _seed_from_example(config_path):
+    example_path = "config.example.json"
+    if not os.path.exists(example_path):
+        return
+    import shutil
+    try:
+        shutil.copy(example_path, config_path)
+        print(f"[Config] 首次运行，已从 {example_path} 创建 {config_path}")
+    except OSError as e:
+        print(f"[Config] 无法从 example 创建配置: {e}")
 
 
 def get_config():

@@ -1,7 +1,8 @@
 {
   "comfyui": {
     "server_address": "127.0.0.1:8188",
-    "generate_timeout": 300
+    "generate_timeout": 300,
+    "install_path": ""
   },
   "camera": {
     "width": 1280,
@@ -31,23 +32,12 @@
   "preferences": {
     "default_region": "forehead_top",
     "default_scale": 1.0,
-    "recent_prompts": [
-      "海盗主题",
-      "蓝色的",
-      "海盗风格",
-      "换蓝色的",
-      "heart-shape glasses",
-      "Heart Shaped Glasses",
-      "Loving Heart Glasses",
-      "Alien Glasses",
-      "外星人眼镜",
-      "cat ears"
-    ],
+    "recent_prompts": [],
     "window_width": 1440,
-    "window_height": 951
+    "window_height": 860
   },
   "external_editor": {
-    "path": "D:/software/sai2/sai2.exe",
+    "path": "",
     "args": ""
   },
   "style": {
