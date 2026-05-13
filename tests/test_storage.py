@@ -124,6 +124,7 @@ def test_save_adjustments_partial(gallery, sample_sticker):
 
 
 def test_save_sticker_with_group_id(gallery, sample_sticker):
+    storage_mod.save_group("海盗主题", [], group_id="grp-123")  # group must exist for group_id to survive load
     sid = storage_mod.save_sticker(sample_sticker, {
         "prompt": "海盗主题",
         "group_id": "grp-123",

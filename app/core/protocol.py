@@ -49,7 +49,6 @@ class Result:
     GENERATION_PROGRESS = "generation_progress"
     GENERATION_RESULT   = "generation_result"
     GENERATION_DONE     = "generation_done"
-    ADJUSTMENT_RESULT   = "adjustment_result"
     AGENT_QUESTION      = "agent_question"
     ERROR               = "error"
 
@@ -61,7 +60,6 @@ class Disp:
     GEN_PROGRESS            = "gen_progress"
     AGENT_MESSAGE           = "agent_message"
     AGENT_QUESTION          = "agent_question"
-    GROUP_CHANGED           = "group_changed"
 
 
 class Anim:
@@ -374,14 +372,6 @@ class DispAgentQuestion:
     options: list = field(default_factory=list)
 
 
-@dataclass
-class DispGroupChanged:
-    action: str = Disp.GROUP_CHANGED
-    group_id: str = ""
-    name: str = ""
-    member_count: int = 0
-    deleted: bool = False
-
 
 @dataclass
 class AnimExportProgress:
@@ -419,7 +409,7 @@ class AnimGenProgress:
 DisplayStatusMsg = (DispStickerSaved | DispGenerationFailed | DispActiveStickersChanged
                     | DispGenProgress | DispAgentMessage | DispAgentQuestion
                     | AnimExportProgress | AnimClipUpdated | AnimPlaybackState
-                    | AnimGenProgress | DispGroupChanged)
+                    | AnimGenProgress)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -715,6 +715,7 @@ class FaceDoodleWindow(QMainWindow):
     def _on_gen_progress(self, msg):
         if msg.done:
             self.chat_panel.add_agent_message(msg.message, "done")
+            self._load_gallery()
             self._reenable_input()
         else:
             self.status_label.setText(msg.message)
@@ -983,6 +984,7 @@ class FaceDoodleWindow(QMainWindow):
     def _on_merge_group(self):
         if len(self._active_instance_ids) < 2:
             return
+        self.gallery_queue.put(GalMergeGroup(instance_ids=list(self._active_instance_ids)))
 
     def _on_anim_clip_updated(self, msg):
         self.anim_timeline.update_clip(msg.clip_data)
@@ -996,7 +998,6 @@ class FaceDoodleWindow(QMainWindow):
                 print(f"[UI] 导出完成: {msg.output_path}")
             else:
                 print("[UI] 导出失败")
-        self.gallery_queue.put(GalMergeGroup(instance_ids=list(self._active_instance_ids)))
 
     def _on_ai_animate(self):
         if len(self._gallery_selected_ids) != 1:

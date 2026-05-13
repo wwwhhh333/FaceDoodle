@@ -268,8 +268,10 @@ class GalleryScrollArea(QScrollArea):
 
     def clear_cards(self):
         for i in range(self.layout.count() - 1, -1, -1):
-            w = self.layout.itemAt(i).widget()
+            item = self.layout.itemAt(i)
+            w = item.widget()
             if w is not None and w is not self._placeholder:
+                self.layout.takeAt(i)
                 w.deleteLater()
         self._section_headers.clear()
         self._section_cards.clear()

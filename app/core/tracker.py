@@ -168,7 +168,8 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
             group_name = None
             if len(tasks) > 1:
                 group_id = str(uuid.uuid4())
-                group_name = str(user_command)
+                raw_name = str(user_command)
+                group_name = raw_name if len(raw_name) <= 50 else raw_name[:47] + "..."
 
             for i, task in enumerate(tasks):
                 result_queue.put({
@@ -225,15 +226,6 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
                 "assistant_message": assistant_message,
                 "group_id": group_id,
                 "group_name": group_name,
-            })
-
-        elif action == "adjust":
-            result_queue.put({
-                "type": Result.ADJUSTMENT_RESULT,
-                "adjustments": chat_result.get("adjustments", []),
-                "target_instance": chat_result.get("target_instance"),
-                "remove": chat_result.get("remove", False),
-                "assistant_message": assistant_message,
             })
 
         elif action == "ask":
@@ -462,6 +454,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             if isinstance(cmd, str):
                 self._append_conversation("user", cmd)
 
+            self._pending_group = None  # Reset any leaked state from interrupted generation
             self.gen_state.start()
             threading.Thread(
                 target=ai_worker_thread,
@@ -511,7 +504,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 )
                 print(f"[Consumer] 贴纸组已保存: {self._pending_group['group_name']} ({len(self._pending_group['member_ids'])} 成员)")
             self._pending_group = None
-            self.display_queue.put(DispGenProgress(done=True, message="生成完成"))
+            self.display_queue.put(DispGenProgress(done=True, message=new_content.get("assistant_message", "生成完成")))
             print(f"[Conversation] 生成完成, 历史: {len(self.conversation_history)} 条")
             return
 
@@ -522,48 +515,6 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 text=new_content.get("message", ""),
             ))
             print(f"[Conversation] Agent 反问, 历史: {len(self.conversation_history)} 条")
-            return
-
-        # ── adjustment result ──
-        if msg_type == Result.ADJUSTMENT_RESULT:
-            assistant_message = new_content.get("assistant_message", "")
-            self._append_conversation("assistant", assistant_message)
-
-            if new_content.get("remove"):
-                target = new_content.get("target_instance")
-                if target:
-                    iid = target.get("instance_id")
-                    self.active_stickers = [s for s in self.active_stickers if s["instance_id"] != iid]
-                    self.adjustments.pop(iid, None)
-                    self._anim_evaluations.pop(iid, None)
-                    self._adj_is_delta.discard(iid)
-                    self.texture_animator.unregister(iid)
-                    if self.edit_target_id == iid:
-                        self.edit_target_id = self.active_stickers[-1]["instance_id"] if self.active_stickers else None
-                    print(f"[Consumer] 已移除贴纸: {iid}")
-            else:
-                target = new_content.get("target_instance")
-                if target:
-                    iid = target.get("instance_id")
-                    adj = self.adjustments.get(iid, {
-                        "offset_x": 0.0, "offset_y": 0.0,
-                        "rotation": 0.0, "scale_mult": 1.0,
-                    })
-                    for a in new_content.get("adjustments", []):
-                        t = a["type"]
-                        v = a["value"]
-                        if t in ("offset_x", "offset_y"):
-                            adj[t] = adj.get(t, 0.0) + v
-                        elif t == "rotation":
-                            adj[t] = adj.get(t, 0.0) + v
-                        elif t == "scale_mult":
-                            adj[t] = adj.get(t, 1.0) * v
-                    self.adjustments[iid] = adj
-                    self._adj_is_delta.discard(iid)
-                    print(f"[Consumer] 已调整贴纸: {iid}, {new_content.get('adjustments', [])}")
-
-            self.display_queue.put(DispAgentMessage(text=assistant_message))
-            print(f"[Conversation] 调整完成, 历史: {len(self.conversation_history)} 条")
             return
 
         # ── generation result (single sticker) ──

@@ -88,10 +88,9 @@ The central orchestrator uses **mixin-based composition** — `ConsumerProcessor
 `FaceDoodleAgent.chat(user_message, conversation_history, active_stickers)` returns structured dicts with `action` field:
 
 - **`generate`** — `{action, message, tasks: [{prompt, region, scale}, ...], workflow}` — multi-sticker generation
-- **`adjust`** — `{action, message, adjustments: [{type, value}], target_instance, remove?}` — move/rotate/scale/remove existing stickers
 - **`ask`** — `{action, message}` — clarification question for the user
 
-Uses DeepSeek API (`openai` client pointed at `api.deepseek.com`) with `response_format: json_object`. Falls back to **keyword matching** when no API key is configured: `KEYWORD_REGION_MAP` maps Chinese keywords to face regions, `_ADJUSTMENT_STEPS` detects scale/move/rotate keywords. `parse_command()` is a backward-compat wrapper returning the old flat dict format.
+Uses DeepSeek API (`openai` client pointed at `api.deepseek.com`) with `response_format: json_object`. Falls back to **keyword matching** when no API key is configured or API calls fail: `KEYWORD_REGION_MAP` maps Chinese keywords to face regions. API calls retry twice with exponential backoff on transient failures. `parse_command()` is a backward-compat wrapper returning the old flat dict format.
 
 Conversation state lives in `ConsumerProcessor.conversation_history` (list of `{role, content}` dicts, max 6 messages). Auto-clears only when stickers that were once present are all removed (tracked via `_had_stickers` flag). User messages are appended in `_process_command_queue`, assistant messages in `_process_result_queue`.
 
@@ -104,10 +103,9 @@ Conversation state lives in `ConsumerProcessor.conversation_history` (list of `{
    - `Result.GENERATION_PROGRESS` — per-sticker progress
    - `Result.GENERATION_RESULT` — each completed sticker (or error)
    - `Result.GENERATION_DONE` — all tasks complete
-   - `Result.ADJUSTMENT_RESULT` — adjustment applied
    - `Result.AGENT_QUESTION` — clarification needed
    - `Result.ERROR` — exception
-5. `_process_result_queue` dispatches: saves stickers via `_save_generated_sticker()`, applies adjustments, forwards messages to `display_queue` as `DispGenProgress`/`DispAgentMessage`/`DispAgentQuestion`/`DispGenerationFailed`
+5. `_process_result_queue` dispatches: saves stickers via `_save_generated_sticker()`, forwards messages to `display_queue` as `DispGenProgress`/`DispAgentMessage`/`DispAgentQuestion`/`DispGenerationFailed`
 
 `GenerationState` is a thread-safe gating class — `_process_command_queue` skips new commands while `gen_state.is_generating` is True. Multi-sticker `generate` tasks run **sequentially** in the worker thread (each ComfyUI call blocks).
 

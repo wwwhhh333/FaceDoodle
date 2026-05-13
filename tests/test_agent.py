@@ -87,6 +87,36 @@ def test_normalize_unknown_falls_back_to_eyes(agent):
     assert agent._normalize_region("") == "eyes"
 
 
+def test_normalize_case_insensitive(agent):
+    assert agent._normalize_region("Eyes") == "eyes"
+    assert agent._normalize_region("Forehead") == "forehead_top"
+    assert agent._normalize_region("NOSE") == "nose"
+
+
+# ── _extract_json_object ──
+
+def test_extract_flat_json(agent):
+    assert agent._extract_json_object('{"a": 1}') == '{"a": 1}'
+
+
+def test_extract_nested_json(agent):
+    text = 'prefix {"adjustments": [{"type": "scale_mult", "value": 0.8}], "action": "adjust"} suffix'
+    result = agent._extract_json_object(text)
+    assert result is not None
+    assert '"type": "scale_mult"' in result
+    assert result.endswith('}')
+
+
+def test_extract_no_braces_returns_none(agent):
+    assert agent._extract_json_object("no json here") is None
+
+
+def test_parse_nested_json_via_extract(agent):
+    result = agent._parse_json_text('prefix {"outer": {"inner": "val"}, "arr": [1,2]} suffix')
+    assert result["outer"]["inner"] == "val"
+    assert result["arr"] == [1, 2]
+
+
 # ── _keyword_fallback ──
 
 def test_keyword_fallback_match(agent):
