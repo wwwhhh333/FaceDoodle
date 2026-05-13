@@ -123,6 +123,79 @@ def test_save_adjustments_partial(gallery, sample_sticker):
     assert loaded["scale_mult"] == 1.0
 
 
+def test_save_sticker_with_group_id(gallery, sample_sticker):
+    sid = storage_mod.save_sticker(sample_sticker, {
+        "prompt": "海盗主题",
+        "group_id": "grp-123",
+    })
+    stickers = storage_mod.load_gallery()
+    assert stickers[0]["group_id"] == "grp-123"
+
+
+def test_save_group_new(gallery):
+    gid = storage_mod.save_group("海盗主题", ["s1", "s2"])
+    assert gid is not None
+
+    groups = storage_mod.load_groups()
+    assert len(groups) == 1
+    assert groups[0]["name"] == "海盗主题"
+    assert groups[0]["member_ids"] == ["s1", "s2"]
+
+
+def test_save_group_update(gallery):
+    gid = storage_mod.save_group("海盗主题", ["s1", "s2"])
+    storage_mod.save_group("海盗主题v2", ["s1", "s2", "s3"], group_id=gid)
+
+    groups = storage_mod.load_groups()
+    assert len(groups) == 1
+    assert groups[0]["name"] == "海盗主题v2"
+    assert groups[0]["member_ids"] == ["s1", "s2", "s3"]
+
+
+def test_save_group_preserves_id(gallery):
+    gid = storage_mod.save_group("test", ["a"])
+    storage_mod.save_group("updated", ["a", "b"], group_id=gid)
+    assert storage_mod.get_group(gid) is not None
+    assert storage_mod.get_group(gid)["name"] == "updated"
+
+
+def test_get_group_nonexistent(gallery):
+    assert storage_mod.get_group("no-such-group") is None
+
+
+def test_delete_sticker_cleans_groups(gallery, sample_sticker):
+    sid1 = storage_mod.save_sticker(sample_sticker, {"prompt": "s1", "group_id": "g1"})
+    sid2 = storage_mod.save_sticker(sample_sticker, {"prompt": "s2", "group_id": "g1"})
+    storage_mod.save_group("双贴纸", [sid1, sid2], group_id="g1")
+
+    storage_mod.delete_sticker(sid1)
+
+    groups = storage_mod.load_groups()
+    assert len(groups) == 1
+    assert groups[0]["member_ids"] == [sid2]
+
+
+def test_delete_last_group_member_removes_group(gallery, sample_sticker):
+    sid = storage_mod.save_sticker(sample_sticker, {"prompt": "lonely", "group_id": "g1"})
+    storage_mod.save_group("单贴纸", [sid], group_id="g1")
+
+    storage_mod.delete_sticker(sid)
+
+    assert len(storage_mod.load_groups()) == 0
+
+
+def test_load_groups_empty_index(gallery):
+    """Backward compat: index.json without 'groups' key returns []."""
+    assert storage_mod.load_groups() == []
+
+
+def test_save_sticker_without_group_id(gallery, sample_sticker):
+    """Old stickers without group_id are handled."""
+    sid = storage_mod.save_sticker(sample_sticker, {"prompt": "old sticker"})
+    stickers = storage_mod.load_gallery()
+    assert stickers[0].get("group_id") is None
+
+
 # save_preferences / load_preferences / add_recent_prompt are thin wrappers
 # around config_loader that write to hardcoded "config.json".  These are
 # better tested as integration tests; the config_loader._deep_merge logic

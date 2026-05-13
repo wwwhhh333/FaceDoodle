@@ -59,6 +59,9 @@ def save_sticker(sticker_bgra, metadata):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "favorite": False,
     }
+    group_id = metadata.get("group_id")
+    if group_id:
+        entry["group_id"] = group_id
 
     with _index_lock:
         index = _load_index()
@@ -70,6 +73,41 @@ def save_sticker(sticker_bgra, metadata):
 
 def load_gallery():
     return _load_index().get("stickers", [])
+
+
+def save_group(group_name, member_ids, group_id=None):
+    """Create or update a sticker group. Returns group_id."""
+    if group_id is None:
+        group_id = str(uuid.uuid4())
+    with _index_lock:
+        index = _load_index()
+        groups = index.setdefault("groups", [])
+        existing = next((g for g in groups if g["id"] == group_id), None)
+        if existing:
+            existing["name"] = group_name
+            existing["member_ids"] = list(member_ids)
+        else:
+            groups.append({
+                "id": group_id,
+                "name": group_name,
+                "member_ids": list(member_ids),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        _save_index(index)
+    return group_id
+
+
+def load_groups():
+    """Return list of group dicts from index.json."""
+    return _load_index().get("groups", [])
+
+
+def get_group(group_id):
+    """Return a single group dict or None."""
+    for g in load_groups():
+        if g["id"] == group_id:
+            return g
+    return None
 
 
 def get_sticker(sticker_id):
@@ -103,6 +141,10 @@ def delete_sticker(sticker_id):
             if os.path.exists(p):
                 os.remove(p)
         index["stickers"] = [s for s in index["stickers"] if s["id"] != sticker_id]
+        groups = index.get("groups", [])
+        for g in groups:
+            g["member_ids"] = [m for m in g.get("member_ids", []) if m != sticker_id]
+        index["groups"] = [g for g in groups if len(g.get("member_ids", [])) > 0]
         _save_index(index)
     return True
 
@@ -286,6 +328,9 @@ def save_animated_sticker(sprite_sheet_bgra, anim_meta, base_metadata):
         "fps": anim_meta.get("fps", 8),
         "motion_prompt": anim_meta.get("motion_prompt", ""),
     }
+    group_id = base_metadata.get("group_id")
+    if group_id:
+        entry["group_id"] = group_id
 
     with _index_lock:
         index = _load_index()

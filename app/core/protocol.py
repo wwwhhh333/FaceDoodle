@@ -45,10 +45,23 @@ class Draw:
     SAVE              = "save"
 
 
+class Result:
+    GENERATION_PROGRESS = "generation_progress"
+    GENERATION_RESULT   = "generation_result"
+    GENERATION_DONE     = "generation_done"
+    ADJUSTMENT_RESULT   = "adjustment_result"
+    AGENT_QUESTION      = "agent_question"
+    ERROR               = "error"
+
+
 class Disp:
     STICKER_SAVED           = "sticker_saved"
     GENERATION_FAILED       = "generation_failed"
     ACTIVE_STICKERS_CHANGED = "active_stickers_changed"
+    GEN_PROGRESS            = "gen_progress"
+    AGENT_MESSAGE           = "agent_message"
+    AGENT_QUESTION          = "agent_question"
+    GROUP_CHANGED           = "group_changed"
 
 
 class Anim:
@@ -340,6 +353,37 @@ class DispActiveStickersChanged:
 
 
 @dataclass
+class DispGenProgress:
+    action: str = Disp.GEN_PROGRESS
+    current: int = 0
+    total: int = 0
+    message: str = ""
+    done: bool = False
+
+
+@dataclass
+class DispAgentMessage:
+    action: str = Disp.AGENT_MESSAGE
+    text: str = ""
+
+
+@dataclass
+class DispAgentQuestion:
+    action: str = Disp.AGENT_QUESTION
+    text: str = ""
+    options: list = field(default_factory=list)
+
+
+@dataclass
+class DispGroupChanged:
+    action: str = Disp.GROUP_CHANGED
+    group_id: str = ""
+    name: str = ""
+    member_count: int = 0
+    deleted: bool = False
+
+
+@dataclass
 class AnimExportProgress:
     action: str = Anim.EXPORT_PROGRESS
     progress: float = 0.0
@@ -373,8 +417,9 @@ class AnimGenProgress:
 
 
 DisplayStatusMsg = (DispStickerSaved | DispGenerationFailed | DispActiveStickersChanged
+                    | DispGenProgress | DispAgentMessage | DispAgentQuestion
                     | AnimExportProgress | AnimClipUpdated | AnimPlaybackState
-                    | AnimGenProgress)
+                    | AnimGenProgress | DispGroupChanged)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

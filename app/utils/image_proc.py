@@ -1,4 +1,4 @@
-﻿# 图像平滑 格式转换 等
+# 图像平滑 格式转换 等
 
 import os
 
@@ -15,7 +15,8 @@ def load_rgba_sticker(filepath):
         print(f"Error: 找不到贴纸文件 {filepath}")
         return None
 
-    sticker = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
+    raw = np.fromfile(filepath, dtype=np.uint8)
+    sticker = cv2.imdecode(raw, cv2.IMREAD_UNCHANGED)
 
     if sticker is None:
         print(f"Warning: 无法读取贴纸文件 {filepath}")

@@ -159,6 +159,53 @@ class TitleBar(QWidget):
 GradientBar = TitleBar
 
 
+class GallerySectionHeader(QWidget):
+    toggled = pyqtSignal(str, bool)  # section_id, expanded
+
+    def __init__(self, section_id, name, count, parent=None):
+        super().__init__(parent)
+        self.section_id = section_id
+        self._expanded = True
+        self.setFixedHeight(26)
+        self.setCursor(Qt.PointingHandCursor)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setSpacing(4)
+
+        self._chevron = QLabel("▾")
+        self._chevron.setStyleSheet(
+            f"color: {INK_MUTED_48}; font-size: 10px; background: transparent; border: none;"
+        )
+        layout.addWidget(self._chevron)
+
+        display = name[:12] + (".." if len(name) > 12 else "")
+        self._name_label = QLabel(display)
+        self._name_label.setStyleSheet(
+            f"color: {INK_MUTED_80}; {font_css('caption-strong')} background: transparent; border: none;"
+        )
+        layout.addWidget(self._name_label, stretch=1)
+
+        self._count_badge = QLabel(str(count))
+        self._count_badge.setFixedSize(18, 16)
+        self._count_badge.setAlignment(Qt.AlignCenter)
+        self._count_badge.setStyleSheet(
+            f"color: {INK_MUTED_48}; background: {DIVIDER_SOFT}; border-radius: {ROUNDED['xs']}; "
+            f"font-size: 9px; border: none;"
+        )
+        layout.addWidget(self._count_badge)
+
+    def set_expanded(self, expanded):
+        self._expanded = expanded
+        self._chevron.setText("▾" if expanded else "▸")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            new_state = not self._expanded
+            self.set_expanded(new_state)
+            self.toggled.emit(self.section_id, new_state)
+
+
 class GalleryScrollArea(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -197,17 +244,35 @@ class GalleryScrollArea(QScrollArea):
         self.layout.addStretch()
         self.setWidget(self.container)
 
+        self._section_headers = {}
+        self._section_cards = {}
+
     def show_placeholder(self, show):
         self._placeholder.setVisible(show)
 
-    def add_card(self, card):
+    def add_section_header(self, section_id, name, count):
+        header = GallerySectionHeader(section_id, name, count)
+        header.toggled.connect(self._on_section_toggle)
+        self.layout.insertWidget(self.layout.count() - 1, header)
+        self._section_headers[section_id] = header
+        self._section_cards.setdefault(section_id, [])
+
+    def add_card(self, card, section_id=None):
         self.layout.insertWidget(self.layout.count() - 1, card)
+        if section_id:
+            self._section_cards.setdefault(section_id, []).append(card)
+
+    def _on_section_toggle(self, section_id, expanded):
+        for card in self._section_cards.get(section_id, []):
+            card.setVisible(expanded)
 
     def clear_cards(self):
         for i in range(self.layout.count() - 1, -1, -1):
             w = self.layout.itemAt(i).widget()
             if w is not None and w is not self._placeholder:
                 w.deleteLater()
+        self._section_headers.clear()
+        self._section_cards.clear()
 
 
 # ── 手绘贴纸组件 ──

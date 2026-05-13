@@ -1,3 +1,21 @@
 {
-  "spinnerTipsEnabled": false
+  "spinnerTipsEnabled": false,
+  "statusLine": {
+    "type": "command",
+    "command": "python -c \"import sys,json; d=json.load(sys.stdin); m=d.get('model',{}).get('display_name',''); r=d.get('context_window',{}).get('remaining_percentage'); u=100-r if r is not None else None; print(f'{m}  |  Context: {u:.0f}%' if u is not None else m)\""
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pre-commit run --all-files 2>&1 | tail -8",
+            "if": "Edit(app/**/*.py)|Write(app/**/*.py)|Edit(tests/**/*.py)|Write(tests/**/*.py)"
+          }
+        ]
+      }
+    ]
+  }
 }

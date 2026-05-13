@@ -116,16 +116,22 @@ def test_keyword_fallback_first_match_wins(agent):
 
 def test_build_fallback_result_with_match(agent):
     result = agent._build_fallback_result("猫耳")
-    assert result["target_location"] == "head_top"
-    assert result["scale"] == 1.4
-    assert "flat vector sticker" in result["positive_prompt"]
+    assert result["action"] == "generate"
+    assert len(result["tasks"]) == 1
+    task = result["tasks"][0]
+    assert task["region"] == "head_top"
+    assert task["scale"] == 1.4
+    assert len(task["prompt"]) > 0
     assert result["workflow"] == "transparent_workflow_api.json"
 
 
 def test_build_fallback_result_no_match(agent):
     result = agent._build_fallback_result("xyzzy nothing")
-    assert result["target_location"] == "eyes"
-    assert result["scale"] == 1.0
+    assert result["action"] == "generate"
+    assert len(result["tasks"]) == 1
+    task = result["tasks"][0]
+    assert task["region"] == "eyes"
+    assert task["scale"] == 1.0
 
 
 # ── parse_command (main entry point, no API key → fallback) ──

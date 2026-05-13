@@ -24,7 +24,9 @@ from app.core.protocol import (
     DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
     DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
     DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
+    DispGenProgress, DispAgentMessage, DispAgentQuestion,
     AnimPlaybackState,
+    Result,
 )
 from app.utils.image_proc import load_rgba_sticker
 from app.utils import storage
@@ -139,7 +141,8 @@ def _handle_img2img(cmd, result_queue, mock, gen_state):
         gen_state.finish()
 
 
-def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state):
+def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
+                     conversation_history=None, active_stickers=None):
     if isinstance(user_command, CmdImg2Img):
         _handle_img2img(user_command, result_queue, mock, gen_state)
         return
@@ -147,50 +150,106 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state):
     agent = FaceDoodleAgent(api_key=api_key)
 
     try:
-        print(f"[AI Worker] 正在解析指令: {user_command}")
-        task_info = agent.parse_command(user_command)
+        print(f"[AI Worker] 正在处理: {user_command}")
+        chat_result = agent.chat(
+            str(user_command),
+            conversation_history=conversation_history,
+            active_stickers=active_stickers,
+        )
+        action = chat_result.get("action")
+        assistant_message = chat_result.get("message", "")
 
-        if not task_info or "positive_prompt" not in task_info:
-            raise ValueError("Agent 解析指令失败")
+        if action == "generate":
+            tasks = chat_result.get("tasks", [])
+            workflow = chat_result.get("workflow", "transparent_workflow_api.json")
+            print(f"[AI Worker] 生成任务: {len(tasks)} 个贴纸")
 
-        if mock:
-            mock_path = "assets/static/loading.png"
-            temp_files = glob.glob("assets/temp/*.png")
-            if temp_files:
-                temp_files.sort(key=os.path.getmtime, reverse=True)
-                mock_path = temp_files[0]
-            print(f"[AI Worker] Mock 模式: 跳过 ComfyUI, 使用 {mock_path}")
-            new_sticker = load_rgba_sticker(mock_path)
+            group_id = None
+            group_name = None
+            if len(tasks) > 1:
+                group_id = str(uuid.uuid4())
+                group_name = str(user_command)
+
+            for i, task in enumerate(tasks):
+                result_queue.put({
+                    "type": Result.GENERATION_PROGRESS,
+                    "current": i + 1,
+                    "total": len(tasks),
+                    "message": f"正在生成 ({i + 1}/{len(tasks)})...",
+                })
+
+                if mock:
+                    mock_path = "assets/static/loading.png"
+                    temp_files = glob.glob("assets/temp/*.png")
+                    if temp_files:
+                        temp_files.sort(key=os.path.getmtime, reverse=True)
+                        mock_path = temp_files[0]
+                    print(f"[AI Worker] Mock 模式: 使用 {mock_path}")
+                    new_sticker = load_rgba_sticker(mock_path)
+                else:
+                    comfy_client = ComfyClient()
+                    print(f"[AI Worker] ComfyUI 生成: {task['prompt'][:60]}...")
+                    image_path = comfy_client.generate_sync(
+                        prompt_text=task["prompt"],
+                        workflow_name=workflow,
+                    )
+                    if image_path and os.path.exists(image_path):
+                        new_sticker = load_rgba_sticker(image_path)
+                    else:
+                        new_sticker = None
+                        print("[AI Worker] 错误：ComfyUI 未生成有效文件")
+
+                if new_sticker is not None:
+                    result_data = {
+                        "type": Result.GENERATION_RESULT,
+                        "sticker": new_sticker,
+                        "location": task["region"],
+                        "scale": task["scale"],
+                        "prompt": str(user_command),
+                        "positive_prompt": task["prompt"],
+                        "timestamp": time.time(),
+                    }
+                    if group_id:
+                        result_data["group_id"] = group_id
+                        result_data["group_name"] = group_name
+                    result_queue.put(result_data)
+                else:
+                    result_queue.put({
+                        "type": Result.GENERATION_RESULT,
+                        "error": f"任务 {i + 1}/{len(tasks)} 生成失败",
+                    })
+
+            # Signal completion
+            result_queue.put({
+                "type": Result.GENERATION_DONE,
+                "assistant_message": assistant_message,
+                "group_id": group_id,
+                "group_name": group_name,
+            })
+
+        elif action == "adjust":
+            result_queue.put({
+                "type": Result.ADJUSTMENT_RESULT,
+                "adjustments": chat_result.get("adjustments", []),
+                "target_instance": chat_result.get("target_instance"),
+                "remove": chat_result.get("remove", False),
+                "assistant_message": assistant_message,
+            })
+
+        elif action == "ask":
+            result_queue.put({
+                "type": Result.AGENT_QUESTION,
+                "message": chat_result.get("message", ""),
+                "assistant_message": assistant_message,
+            })
+
         else:
-            comfy_client = ComfyClient()
-            print(f"[AI Worker] 正在调用 ComfyUI 生成: {task_info['positive_prompt']}")
-            image_path = comfy_client.generate_sync(
-                prompt_text=task_info["positive_prompt"],
-                workflow_name=task_info["workflow"]
-            )
-            if image_path and os.path.exists(image_path):
-                new_sticker = load_rgba_sticker(image_path)
-            else:
-                new_sticker = None
-                print("[AI Worker] 错误：ComfyUI 未生成有效文件")
-
-        if new_sticker is not None:
-            result_data = {
-                "sticker": new_sticker,
-                "location": task_info["target_location"],
-                "scale": task_info.get("scale", 1.0),
-                "prompt": user_command,
-                "positive_prompt": task_info.get("positive_prompt", ""),
-                "timestamp": time.time()
-            }
-            result_queue.put(result_data)
-            print(f"[AI Worker] 任务完成，位置: {task_info['target_location']}")
-        else:
-            result_queue.put({"error": "ComfyUI 未能生成有效图片，请检查服务是否正常运行"})
+            print(f"[AI Worker] 未知 action: {action}")
+            result_queue.put({"type": Result.ERROR, "error": f"未知操作: {action}"})
 
     except Exception as e:
-        print(f"[AI Worker] 发生异常: {str(e)}")
-        result_queue.put({"error": str(e)})
+        print(f"[AI Worker] 异常: {e}")
+        result_queue.put({"type": Result.ERROR, "error": str(e)})
 
     finally:
         gen_state.finish()
@@ -275,6 +334,13 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self.texture_animator = TextureAnimator()
         self._pending_texture_gen = None   # AnimGenTexture message
         self._texture_gen_running = False
+
+        self.conversation_history = []   # list[dict], multi-turn dialog state
+        self.max_conversation_turns = 6  # keep last 6 messages (3 turns)
+
+        self._last_synced_state = None   # fingerprint to skip no-op _sync_state_to_ui pushes
+        self._pending_group = None       # dict: {group_id, group_name, member_ids: []}
+        self._had_stickers = False       # track whether stickers were ever present (for auto-clear)
 
     # ── public API ──
 
@@ -364,12 +430,18 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             self.pending_command = self.command_queue.get()
 
         if self.pending_command and not self.gen_state.is_generating:
-            self.gen_state.start()
             cmd = self.pending_command
             self.pending_command = None
+
+            if isinstance(cmd, str):
+                self._append_conversation("user", cmd)
+
+            self.gen_state.start()
             threading.Thread(
                 target=ai_worker_thread,
-                args=(cmd, self.result_queue, self.api_key, self.mock, self.gen_state),
+                args=(cmd, self.result_queue, self.api_key, self.mock, self.gen_state,
+                      list(self.conversation_history),
+                      list(self.active_stickers)),
                 daemon=True
             ).start()
 
@@ -381,39 +453,185 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         except queue.Empty:
             return
 
-        if "error" in new_content:
+        msg_type = new_content.get("type", "")
+
+        # ── old-format error (backward compat) ──
+        if msg_type == "" and "error" in new_content:
             self.display_queue.put(DispGenerationFailed(error=new_content["error"]))
             return
 
-        try:
-            if len(self.active_stickers) >= self.MAX_STICKERS:
-                print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，跳过自动添加")
-                return
+        # ── new-format error ──
+        if msg_type == Result.ERROR:
+            self.display_queue.put(DispGenerationFailed(error=new_content.get("error", "未知错误")))
+            return
 
-            sticker_id = storage.save_sticker(
-                new_content['sticker'],
-                {"prompt": new_content.get("prompt", ""),
-                 "location": new_content.get("location", "forehead"),
-                 "scale": new_content.get("scale", 1.0)}
-            )
-            saved_adj = (self._sticker_adjustments.get(sticker_id)
-                         or storage.get_sticker_adjustments(sticker_id))
-            adj = dict(saved_adj) if saved_adj else {
-                "offset_x": 0.0, "offset_y": 0.0,
-                "rotation": 0.0, "scale_mult": 1.0,
+        # ── generation progress ──
+        if msg_type == Result.GENERATION_PROGRESS:
+            self.display_queue.put(DispGenProgress(
+                current=new_content.get("current", 0),
+                total=new_content.get("total", 0),
+                message=new_content.get("message", ""),
+            ))
+            return
+
+        # ── generation done ──
+        if msg_type == Result.GENERATION_DONE:
+            self._append_conversation("assistant", new_content.get("assistant_message", ""))
+            if self._pending_group is not None and len(self._pending_group["member_ids"]) > 1:
+                storage.save_group(
+                    group_name=self._pending_group["group_name"],
+                    member_ids=self._pending_group["member_ids"],
+                    group_id=self._pending_group["group_id"],
+                )
+                print(f"[Consumer] 贴纸组已保存: {self._pending_group['group_name']} ({len(self._pending_group['member_ids'])} 成员)")
+            self._pending_group = None
+            self.display_queue.put(DispGenProgress(done=True, message="生成完成"))
+            print(f"[Conversation] 生成完成, 历史: {len(self.conversation_history)} 条")
+            return
+
+        # ── agent question ──
+        if msg_type == Result.AGENT_QUESTION:
+            self._append_conversation("assistant", new_content.get("assistant_message", ""))
+            self.display_queue.put(DispAgentQuestion(
+                text=new_content.get("message", ""),
+            ))
+            print(f"[Conversation] Agent 反问, 历史: {len(self.conversation_history)} 条")
+            return
+
+        # ── adjustment result ──
+        if msg_type == Result.ADJUSTMENT_RESULT:
+            assistant_message = new_content.get("assistant_message", "")
+            self._append_conversation("assistant", assistant_message)
+
+            if new_content.get("remove"):
+                target = new_content.get("target_instance")
+                if target:
+                    iid = target.get("instance_id")
+                    self.active_stickers = [s for s in self.active_stickers if s["instance_id"] != iid]
+                    self.adjustments.pop(iid, None)
+                    self._anim_evaluations.pop(iid, None)
+                    self._adj_is_delta.discard(iid)
+                    self.texture_animator.unregister(iid)
+                    if self.edit_target_id == iid:
+                        self.edit_target_id = self.active_stickers[-1]["instance_id"] if self.active_stickers else None
+                    print(f"[Consumer] 已移除贴纸: {iid}")
+            else:
+                target = new_content.get("target_instance")
+                if target:
+                    iid = target.get("instance_id")
+                    adj = self.adjustments.get(iid, {
+                        "offset_x": 0.0, "offset_y": 0.0,
+                        "rotation": 0.0, "scale_mult": 1.0,
+                    })
+                    for a in new_content.get("adjustments", []):
+                        t = a["type"]
+                        v = a["value"]
+                        if t in ("offset_x", "offset_y"):
+                            adj[t] = adj.get(t, 0.0) + v
+                        elif t == "rotation":
+                            adj[t] = adj.get(t, 0.0) + v
+                        elif t == "scale_mult":
+                            adj[t] = adj.get(t, 1.0) * v
+                    self.adjustments[iid] = adj
+                    self._adj_is_delta.discard(iid)
+                    print(f"[Consumer] 已调整贴纸: {iid}, {new_content.get('adjustments', [])}")
+
+            self.display_queue.put(DispAgentMessage(text=assistant_message))
+            print(f"[Conversation] 调整完成, 历史: {len(self.conversation_history)} 条")
+            return
+
+        # ── generation result (single sticker) ──
+        if msg_type == Result.GENERATION_RESULT:
+            if "error" in new_content:
+                print(f"[Consumer] 贴纸生成失败: {new_content['error']}")
+                self.display_queue.put(DispGenerationFailed(error=new_content['error']))
+                return
+            try:
+                sticker_id = self._save_generated_sticker(new_content)
+                group_id = new_content.get("group_id")
+                if group_id and sticker_id is not None:
+                    self._accumulate_group_member(
+                        group_id,
+                        new_content.get("group_name", ""),
+                        sticker_id,
+                    )
+            except Exception as e:
+                print(f"[Consumer] 保存贴纸失败: {e}")
+            return
+
+        # ── old-format success (backward compat, no type field) ──
+        if msg_type == "" and "sticker" in new_content:
+            try:
+                if self._save_generated_sticker(new_content) is not None:
+                    self.display_queue.put(DispGenProgress(done=True, message="生成完成"))
+            except Exception as e:
+                print(f"[Consumer] 保存贴纸失败: {e}")
+            return
+
+    # ── sticker persistence helper ──
+
+    def _save_generated_sticker(self, new_content):
+        """Save a generated sticker to disk and add it as an active instance.
+
+        Returns sticker_id on success, None if at capacity.
+        """
+        if len(self.active_stickers) >= self.MAX_STICKERS:
+            print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，跳过添加")
+            return None
+
+        metadata = {
+            "prompt": new_content.get("prompt", ""),
+            "location": new_content.get("location", "forehead"),
+            "scale": new_content.get("scale", 1.0),
+        }
+        group_id = new_content.get("group_id")
+        if group_id:
+            metadata["group_id"] = group_id
+
+        sticker_id = storage.save_sticker(
+            new_content['sticker'], metadata,
+        )
+        saved_adj = (self._sticker_adjustments.get(sticker_id)
+                     or storage.get_sticker_adjustments(sticker_id))
+        adj = dict(saved_adj) if saved_adj else {
+            "offset_x": 0.0, "offset_y": 0.0,
+            "rotation": 0.0, "scale_mult": 1.0,
+        }
+        instance_id = self._add_sticker_instance(
+            new_content['sticker'], sticker_id,
+            new_content.get("location", "forehead"),
+            new_content.get("scale", 1.0),
+            new_content.get("prompt", ""),
+        )
+        self.adjustments[instance_id] = adj
+        self.edit_target_id = instance_id
+        self.display_queue.put(DispStickerSaved(sticker_id=sticker_id))
+        self.active_content = new_content  # backward compat
+        print(f"[Consumer] 贴纸已保存: {sticker_id}")
+        return sticker_id
+
+    def _accumulate_group_member(self, group_id, group_name, sticker_id):
+        if self._pending_group is None:
+            self._pending_group = {
+                "group_id": group_id,
+                "group_name": group_name,
+                "member_ids": [],
             }
-            instance_id = self._add_sticker_instance(
-                new_content['sticker'], sticker_id,
-                new_content.get("location", "forehead"),
-                new_content.get("scale", 1.0),
-                new_content.get("prompt", ""),
-            )
-            self.adjustments[instance_id] = adj
-            self.edit_target_id = instance_id
-            self.display_queue.put(DispStickerSaved(sticker_id=sticker_id))
-            self.active_content = new_content  # backward compat
-        except Exception as e:
-            print(f"[Consumer] 保存贴纸失败: {e}")
+        if sticker_id:
+            self._pending_group["member_ids"].append(sticker_id)
+
+    # ── conversation helpers ──
+
+    def _append_conversation(self, role, content):
+        if not content:
+            return
+        self.conversation_history.append({"role": role, "content": content})
+        if len(self.conversation_history) > self.max_conversation_turns:
+            self.conversation_history = self.conversation_history[-self.max_conversation_turns:]
+        # Auto-clear only when stickers that were once present are all removed
+        if not self.active_stickers and self._had_stickers:
+            self.conversation_history.clear()
+            self._had_stickers = False
 
     # ── adjustment queue ──
 
@@ -594,6 +812,16 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 "sticker_id": s["sticker_id"],
                 "region": s["location"],
             })
+
+        fingerprint = (
+            len(self.active_stickers),
+            tuple((i["instance_id"], i["sticker_id"], i["region"]) for i in instances_info),
+            self.edit_target_id,
+        )
+        if fingerprint == self._last_synced_state:
+            return
+        self._last_synced_state = fingerprint
+
         self.display_queue.put(DispActiveStickersChanged(
             active_count=len(self.active_stickers),
             instances=instances_info,

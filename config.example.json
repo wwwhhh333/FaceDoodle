@@ -1,0 +1,86 @@
+{
+  "comfyui": {
+    "server_address": "127.0.0.1:8188",
+    "generate_timeout": 300
+  },
+  "camera": {
+    "width": 1280,
+    "height": 720
+  },
+  "queue": {
+    "frame_maxsize": 5,
+    "display_maxsize": 5,
+    "command_maxsize": 5
+  },
+  "agent": {
+    "model_id": "deepseek-chat"
+  },
+  "model": {
+    "lora": {
+      "name": "add-detail-xl.safetensors",
+      "strength_model": 1.5,
+      "strength_clip": 1.5
+    }
+  },
+  "generation": {
+    "negative_prompt": "photo, realistic, 3D render, shadow, complex background, blur, noisy edges, text, watermark, signature, low quality, jpeg artifacts",
+    "symmetry_enabled": true,
+    "symmetry_positive_suffix": "symmetrical design, perfectly mirrored, balanced composition",
+    "symmetry_negative_suffix": "asymmetrical, uneven, unbalanced, lopsided"
+  },
+  "preferences": {
+    "default_region": "forehead_top",
+    "default_scale": 1.0,
+    "recent_prompts": [
+      "海盗主题",
+      "蓝色的",
+      "海盗风格",
+      "换蓝色的",
+      "heart-shape glasses",
+      "Heart Shaped Glasses",
+      "Loving Heart Glasses",
+      "Alien Glasses",
+      "外星人眼镜",
+      "cat ears"
+    ],
+    "window_width": 1440,
+    "window_height": 951
+  },
+  "external_editor": {
+    "path": "D:/software/sai2/sai2.exe",
+    "args": ""
+  },
+  "style": {
+    "selected_preset": "semi_realistic",
+    "presets": {
+      "pixel_art": {
+        "name": "像素风格",
+        "positive_prefix": "game icon institute, pixel art of {prompt}, retro game sprite, 16-bit style, clean pixel edges, iconic design",
+        "lora_name": "gmic icon_Pixel style-000012.safetensors",
+        "lora_strength_model": 0.8,
+        "lora_strength_clip": 0.8
+      },
+      "vector_art": {
+        "name": "矢量风格",
+        "positive_prefix": "vector art of {prompt}, clean flat vector illustration, simple background, crisp edges, minimalist icon design",
+        "lora_name": "vector_art_IL_MIX_V01.safetensors",
+        "lora_strength_model": 2.0,
+        "lora_strength_clip": 2.0
+      },
+      "cartoon_style": {
+        "name": "卡通风格",
+        "positive_prefix": "gmic icon \\(2dkat\\), cartoon illustration of {prompt}, vibrant cel shading, charming character design, clean edges, game item icon, masterpiece, best quality, good quality",
+        "lora_name": "gmic icon_2d cartoon icon.safetensors",
+        "lora_strength_model": 0.85,
+        "lora_strength_clip": 0.85
+      },
+      "semi_realistic": {
+        "name": "半写实",
+        "positive_prefix": "highly detailed digital illustration of {prompt}, professional rendering, intricate details, sharp focus, clean composition, studio quality",
+        "lora_name": "add-detail-xl.safetensors",
+        "lora_strength_model": 1.5,
+        "lora_strength_clip": 1.5
+      }
+    }
+  }
+}

@@ -16,6 +16,7 @@ from app.ui.drawing_widgets import DrawingDialog
 from app.ui.sticker_panel import ActiveStickersPanel
 from app.ui.animation_timeline import AnimationTimeline
 from app.ui.animation_gen_dialog import AnimationGenDialog
+from app.ui.chat_panel import ChatMessagePanel
 from app.utils import storage
 from app.utils.config_loader import get_config, get_style_preset_items
 from app.core.brush import load_brush_config
@@ -28,6 +29,7 @@ from app.core.protocol import (
     DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
     DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
     DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
+    DispGenProgress, DispAgentMessage, DispAgentQuestion,
     AnimExportProgress, AnimClipUpdated, AnimPlaybackState,
     AnimGenTexture, AnimGenProgress,
 )
@@ -38,6 +40,9 @@ class VideoUpdateThread(QThread):
     sticker_saved_signal = pyqtSignal(str)
     generation_failed_signal = pyqtSignal(str)
     active_stickers_signal = pyqtSignal(object)
+    gen_progress_signal = pyqtSignal(object)
+    agent_message_signal = pyqtSignal(str)
+    agent_question_signal = pyqtSignal(str)
     anim_export_progress_signal = pyqtSignal(object)
     anim_clip_updated_signal = pyqtSignal(object)
     anim_playback_state_signal = pyqtSignal(object)
@@ -61,6 +66,12 @@ class VideoUpdateThread(QThread):
                     self.generation_failed_signal.emit(item.error)
                 elif isinstance(item, DispActiveStickersChanged):
                     self.active_stickers_signal.emit(item)
+                elif isinstance(item, DispGenProgress):
+                    self.gen_progress_signal.emit(item)
+                elif isinstance(item, DispAgentMessage):
+                    self.agent_message_signal.emit(item.text)
+                elif isinstance(item, DispAgentQuestion):
+                    self.agent_question_signal.emit(item.text)
                 elif isinstance(item, AnimExportProgress):
                     self.anim_export_progress_signal.emit(item)
                 elif isinstance(item, AnimClipUpdated):
@@ -126,6 +137,9 @@ class FaceDoodleWindow(QMainWindow):
         self.video_thread.sticker_saved_signal.connect(self._on_sticker_saved)
         self.video_thread.generation_failed_signal.connect(self._on_generation_failed)
         self.video_thread.active_stickers_signal.connect(self._on_active_stickers_changed)
+        self.video_thread.gen_progress_signal.connect(self._on_gen_progress)
+        self.video_thread.agent_message_signal.connect(self._on_agent_message)
+        self.video_thread.agent_question_signal.connect(self._on_agent_question)
         self.video_thread.anim_clip_updated_signal.connect(self._on_anim_clip_updated)
         self.video_thread.anim_playback_state_signal.connect(self._on_anim_playback_state)
         self.video_thread.anim_export_progress_signal.connect(self._on_anim_export_progress)
@@ -260,6 +274,11 @@ class FaceDoodleWindow(QMainWindow):
         self.anim_timeline = AnimationTimeline(self.animation_queue)
         self.anim_timeline.setVisible(False)
         root.addWidget(self.anim_timeline)
+
+        # ── Chat message panel ──
+        self.chat_panel = ChatMessagePanel()
+        self.chat_panel.setStyleSheet(f"background: {CANVAS}; border-top: 1px solid {HAIRLINE};")
+        root.addWidget(self.chat_panel)
 
         # ── 3. 输入区 ──
         input_row = QWidget()
@@ -573,18 +592,46 @@ class FaceDoodleWindow(QMainWindow):
             return
 
         stickers = storage.load_gallery()
+        groups = storage.load_groups()
+
+        grouped = {}
+        ungrouped = []
         for s in stickers:
-            sid = s["id"]
             if self._gallery_filter == "favorites" and not s.get("favorite", False):
                 continue
+            gid = s.get("group_id")
+            if gid and any(grp["id"] == gid for grp in groups):
+                grouped.setdefault(gid, []).append(s)
+            else:
+                ungrouped.append(s)
+
+        def _create_card(s):
+            sid = s["id"]
             thumb = storage.get_sticker_thumb(sid)
             card = ThumbnailCard(sid, thumb, s.get("prompt", ""), s.get("favorite", False),
                                 is_animated=s.get("is_animated", False))
             card.clicked.connect(self._on_gallery_click)
             card.set_selected(sid in self._gallery_selected_ids)
             card.set_active(False)
-            self.gallery.add_card(card)
             self._gallery_items[sid] = card
+            return card
+
+        for g in groups:
+            members = grouped.get(g["id"], [])
+            if not members:
+                continue
+            section_id = f"__grp_{g['id']}"
+            self.gallery.add_section_header(section_id, g.get("name", "未命名"), len(members))
+            for s in members:
+                card = _create_card(s)
+                self.gallery.add_card(card, section_id=section_id)
+
+        if ungrouped:
+            self.gallery.add_section_header("__ungrouped", "其他贴纸", len(ungrouped))
+            for s in ungrouped:
+                card = _create_card(s)
+                self.gallery.add_card(card, section_id="__ungrouped")
+
         self._update_gallery_info()
 
     def _update_gallery_info(self):
@@ -658,11 +705,28 @@ class FaceDoodleWindow(QMainWindow):
     def _on_sticker_saved(self, sticker_id):
         self._current_sticker_id = sticker_id
         self._load_gallery()
-        self._reenable_input()
+        # Don't re-enable here — DispGenProgress(done=True) handles it
 
     def _on_generation_failed(self, error_msg):
+        self.chat_panel.add_agent_message(f"生成失败: {error_msg}", "failed")
         self._reenable_input()
         QMessageBox.warning(self, "生成失败", f"贴纸生成失败：\n{error_msg}")
+
+    def _on_gen_progress(self, msg):
+        if msg.done:
+            self.chat_panel.add_agent_message(msg.message, "done")
+            self._reenable_input()
+        else:
+            self.status_label.setText(msg.message)
+
+    def _on_agent_message(self, text):
+        self.chat_panel.add_agent_message(text, "done")
+        self.status_label.setText(text)
+
+    def _on_agent_question(self, text):
+        self.chat_panel.add_agent_message(text, "ask")
+        self.status_label.setText(text)
+        self._reenable_input()
 
     def _toggle_favorite(self):
         if not self._current_sticker_id:
@@ -1207,6 +1271,7 @@ class FaceDoodleWindow(QMainWindow):
         text = self.input_box.text().strip()
         if not text:
             return
+        self.chat_panel.add_user_message(text)
         self.command_queue.put(text)
         storage.add_recent_prompt(text)
         self.input_box.clear()

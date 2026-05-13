@@ -35,6 +35,7 @@ class StickerManager:
             instance["frame_rows"] = anim_meta.get("frame_rows", 1)
             instance["fps"] = anim_meta.get("fps", 8)
         self.active_stickers.append(instance)
+        self._had_stickers = True
         return instance_id
 
     def _handle_add_sticker(self, gmsg):

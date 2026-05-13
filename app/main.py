@@ -10,12 +10,28 @@ from app.ui.main_window import FaceDoodleWindow
 from app.utils.config_loader import load_config
 from app.utils.storage import load_preferences
 
-API_KEY = os.getenv("DEEPSEEK_API_KEY") or os.getenv("MODELSCOPE_API_KEY")
 MOCK_MODE = "--mock" in sys.argv
+
+
+def _resolve_api_key(config):
+    key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("MODELSCOPE_API_KEY")
+    if key:
+        return key
+    key_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api_key.txt")
+    if os.path.exists(key_file):
+        try:
+            with open(key_file, "r", encoding="utf-8-sig") as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except Exception:
+            pass
+    return config.get("api_key", "")
 
 
 def main():
     config = load_config()
+    api_key = _resolve_api_key(config)
     queue_cfg = config.get("queue", {})
     prefs = load_preferences()
 
@@ -39,7 +55,7 @@ def main():
         gallery_queue,
         draw_queue,
         animation_queue,
-        API_KEY,
+        api_key,
         stop_event,
         MOCK_MODE,
     ))

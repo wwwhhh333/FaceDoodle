@@ -1,0 +1,17 @@
+repos:
+  - repo: local
+    hooks:
+      - id: python-syntax-check
+        name: Python syntax check
+        entry: python -B scripts/check_syntax.py
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: pytest
+        name: Run test suite
+        entry: python -B -m pytest tests/ -x --tb=short -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
