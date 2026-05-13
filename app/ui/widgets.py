@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QScrollArea,
-                             QHBoxLayout, QVBoxLayout)
+                             QHBoxLayout, QVBoxLayout, QSizePolicy, QLayout)
 from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QRect, QSize
 import numpy as np
 
 from app.ui.theme import (PRIMARY, CANVAS, PARCHMENT, INK,
@@ -160,34 +160,55 @@ GradientBar = TitleBar
 
 
 class GallerySectionHeader(QWidget):
-    toggled = pyqtSignal(str, bool)  # section_id, expanded
+    toggled = pyqtSignal(str, bool)           # section_id, expanded
+    loadGroupRequested = pyqtSignal(str)      # group_id
 
-    def __init__(self, section_id, name, count, parent=None):
+    def __init__(self, section_id, name, count, group_id=None, parent=None):
         super().__init__(parent)
         self.section_id = section_id
+        self.group_id = group_id or ""
         self._expanded = True
-        self.setFixedHeight(26)
+        self.setFixedHeight(28)
         self.setCursor(Qt.PointingHandCursor)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 3, 6, 3)
+        layout.setContentsMargins(6, 4, 4, 4)
         layout.setSpacing(4)
 
         self._chevron = QLabel("▾")
+        self._chevron.setFixedWidth(10)
         self._chevron.setStyleSheet(
             f"color: {INK_MUTED_48}; font-size: 10px; background: transparent; border: none;"
         )
         layout.addWidget(self._chevron)
 
-        display = name[:12] + (".." if len(name) > 12 else "")
-        self._name_label = QLabel(display)
+        self._full_name = name
+        self._name_label = QLabel(name)
         self._name_label.setStyleSheet(
             f"color: {INK_MUTED_80}; {font_css('caption-strong')} background: transparent; border: none;"
         )
+        self._name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._name_label.setMinimumWidth(20)
         layout.addWidget(self._name_label, stretch=1)
 
+        if group_id:
+            self._add_btn = QPushButton("+")
+            self._add_btn.setFixedSize(22, 20)
+            self._add_btn.setCursor(Qt.PointingHandCursor)
+            self._add_btn.setToolTip("整组添加到面部")
+            self._add_btn.setStyleSheet(
+                f"QPushButton {{ color: #fff; background: {PRIMARY}; "
+                f"border-radius: {ROUNDED['sm']}; font-size: 13px; font-weight: 700; "
+                f"border: 1px solid {PRIMARY}; padding: 0; }}"
+                f"QPushButton:hover {{ background: #fff; color: {PRIMARY}; }}"
+            )
+            self._add_btn.clicked.connect(lambda: self.loadGroupRequested.emit(self.group_id))
+            layout.addWidget(self._add_btn)
+        else:
+            self._add_btn = None
+
         self._count_badge = QLabel(str(count))
-        self._count_badge.setFixedSize(18, 16)
+        self._count_badge.setFixedSize(22, 18)
         self._count_badge.setAlignment(Qt.AlignCenter)
         self._count_badge.setStyleSheet(
             f"color: {INK_MUTED_48}; background: {DIVIDER_SOFT}; border-radius: {ROUNDED['xs']}; "
@@ -201,6 +222,9 @@ class GallerySectionHeader(QWidget):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            if self._add_btn and self._add_btn.geometry().contains(event.pos()):
+                super().mousePressEvent(event)
+                return
             new_state = not self._expanded
             self.set_expanded(new_state)
             self.toggled.emit(self.section_id, new_state)
@@ -209,7 +233,7 @@ class GallerySectionHeader(QWidget):
 class GalleryScrollArea(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(210)
+        self.setMinimumWidth(140)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -245,26 +269,37 @@ class GalleryScrollArea(QScrollArea):
         self.setWidget(self.container)
 
         self._section_headers = {}
-        self._section_cards = {}
+        self._section_flows = {}
 
     def show_placeholder(self, show):
         self._placeholder.setVisible(show)
 
-    def add_section_header(self, section_id, name, count):
-        header = GallerySectionHeader(section_id, name, count)
+    def get_section_header(self, section_id):
+        return self._section_headers.get(section_id)
+
+    def add_section_header(self, section_id, name, count, group_id=None):
+        header = GallerySectionHeader(section_id, name, count, group_id=group_id)
         header.toggled.connect(self._on_section_toggle)
         self.layout.insertWidget(self.layout.count() - 1, header)
         self._section_headers[section_id] = header
-        self._section_cards.setdefault(section_id, [])
+        flow_container = QWidget()
+        flow_container.setStyleSheet("background: transparent;")
+        flow_layout = FlowLayout(flow_container, spacing=4)
+        flow_layout.setContentsMargins(0, 2, 0, 6)
+        self.layout.insertWidget(self.layout.count() - 1, flow_container)
+        self._section_flows[section_id] = (flow_container, flow_layout)
 
     def add_card(self, card, section_id=None):
-        self.layout.insertWidget(self.layout.count() - 1, card)
-        if section_id:
-            self._section_cards.setdefault(section_id, []).append(card)
+        if section_id and section_id in self._section_flows:
+            _, flow_layout = self._section_flows[section_id]
+            flow_layout.addWidget(card)
+        else:
+            self.layout.insertWidget(self.layout.count() - 1, card)
 
     def _on_section_toggle(self, section_id, expanded):
-        for card in self._section_cards.get(section_id, []):
-            card.setVisible(expanded)
+        if section_id in self._section_flows:
+            flow_container, _ = self._section_flows[section_id]
+            flow_container.setVisible(expanded)
 
     def clear_cards(self):
         for i in range(self.layout.count() - 1, -1, -1):
@@ -274,7 +309,86 @@ class GalleryScrollArea(QScrollArea):
                 self.layout.takeAt(i)
                 w.deleteLater()
         self._section_headers.clear()
-        self._section_cards.clear()
+        self._section_flows.clear()
+
+
+# ── FlowLayout ──
+
+class FlowLayout(QLayout):
+    """Wrapping horizontal layout: cards flow left-to-right, wrap when narrow."""
+
+    def __init__(self, parent=None, spacing=4):
+        super().__init__(parent)
+        self._items = []
+        self._h_spacing = spacing
+        self._v_spacing = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientations(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), apply_geometry=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, apply_geometry=True)
+
+    def sizeHint(self):
+        h = self.heightForWidth(200)
+        return QSize(200, h)
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+        return size
+
+    def _do_layout(self, rect, apply_geometry):
+        margins = self.contentsMargins()
+        x = rect.x() + margins.left()
+        y = rect.y() + margins.top()
+        line_height = 0
+        max_width = rect.width() - margins.left() - margins.right()
+
+        for item in self._items:
+            size_hint = item.sizeHint()
+            w = min(size_hint.width(), max_width)
+            h = size_hint.height()
+
+            if x + w > rect.x() + margins.left() + max_width and line_height > 0:
+                x = rect.x() + margins.left()
+                y += line_height + self._v_spacing
+                line_height = 0
+
+            if apply_geometry:
+                item.setGeometry(QRect(x, y, w, h))
+
+            x += w + self._h_spacing
+            line_height = max(line_height, h)
+
+        return y + line_height - rect.y() + margins.bottom()
 
 
 # ── 手绘贴纸组件 ──

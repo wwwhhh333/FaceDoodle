@@ -1,8 +1,9 @@
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QLabel, QLineEdit, QPushButton, QShortcut, QMessageBox,
-                             QFileDialog, QDialog, QComboBox, QSlider, QCheckBox)
+                             QFormLayout, QGroupBox, QLabel, QLineEdit, QPushButton,
+                             QShortcut, QMessageBox, QFileDialog, QDialog, QComboBox,
+                             QSlider, QCheckBox, QSpinBox, QDoubleSpinBox, QSplitter)
 from PyQt5.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 
@@ -18,7 +19,7 @@ from app.ui.animation_timeline import AnimationTimeline
 from app.ui.animation_gen_dialog import AnimationGenDialog
 from app.ui.chat_panel import ChatMessagePanel
 from app.utils import storage
-from app.utils.config_loader import get_config, get_style_preset_items
+from app.utils.config_loader import get_config, save_config, get_style_preset_items
 from app.core.brush import load_brush_config
 from app.core.templates import load_templates
 from app.core.protocol import (
@@ -173,19 +174,23 @@ class FaceDoodleWindow(QMainWindow):
         root.addWidget(top_bar)
 
         # ── 2. 中间区域: 左侧活动贴纸 + 视频 + 右侧贴纸库 ──
-        content_row = QHBoxLayout()
-        content_row.setContentsMargins(0, 0, 0, 0)
-        content_row.setSpacing(0)
+        _splitter_style = (
+            f"QSplitter::handle {{ background: {rgba(INK, 0.08)}; }}"
+            f"QSplitter::handle:hover {{ background: {rgba(PRIMARY, 0.3)}; }}"
+        )
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(2)
+        splitter.setStyleSheet(_splitter_style)
 
         # 左侧边栏 — 已添加到面部的贴纸
         left_panel = QWidget()
-        left_panel.setFixedWidth(100)
+        left_panel.setMinimumWidth(80)
         left_panel.setStyleSheet(f"background: {PARCHMENT}; border: none;")
         lp_layout = QVBoxLayout(left_panel)
         lp_layout.setContentsMargins(4, 8, 4, 8)
         lp_layout.setSpacing(4)
 
-        left_title = QLabel("面部贴纸")
+        left_title = QLabel("面部\n贴纸")
         left_title.setAlignment(Qt.AlignCenter)
         left_title.setStyleSheet(
             f"color: {INK_MUTED_48}; {font_css('caption-strong')} background: transparent; border: none; padding-bottom: 4px;"
@@ -200,20 +205,20 @@ class FaceDoodleWindow(QMainWindow):
             lambda iid: self.gallery_queue.put(GalRemoveSticker(instance_id=iid))
         )
         lp_layout.addWidget(self.active_panel, stretch=1)
-        content_row.addWidget(left_panel)
+        splitter.addWidget(left_panel)
 
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet(f"background: {CANVAS}; border: none;")
-        self.video_label.setMinimumSize(800, 500)
+        self.video_label.setMinimumSize(640, 400)
         self.video_label.setMouseTracking(True)
         self.video_label.setTabletTracking(True)
         self.video_label.installEventFilter(self)
-        content_row.addWidget(self.video_label, stretch=1)
+        splitter.addWidget(self.video_label)
 
         # 右侧面板 — 贴纸库
         right_panel = QWidget()
-        right_panel.setFixedWidth(210)
+        right_panel.setMinimumWidth(160)
         right_panel.setStyleSheet(f"background: {PARCHMENT}; border: none;")
         rp_layout = QVBoxLayout(right_panel)
         rp_layout.setContentsMargins(8, 12, 8, 8)
@@ -259,8 +264,19 @@ class FaceDoodleWindow(QMainWindow):
         self.ai_anim_btn.setEnabled(False)
         rp_layout.addWidget(self.ai_anim_btn)
 
-        content_row.addWidget(right_panel)
-        root.addLayout(content_row, stretch=1)
+        splitter.addWidget(right_panel)
+        splitter.setSizes([100, 800, 210])
+        # ── 底部区域（可拖拽） ──
+        v_splitter = QSplitter(Qt.Vertical)
+        v_splitter.setHandleWidth(2)
+        v_splitter.setStyleSheet(_splitter_style)
+
+        v_splitter.addWidget(splitter)
+
+        bottom_widget = QWidget()
+        bottom_layout = QVBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(0)
 
         self.edit_indicator = QLabel("编辑模式: 开启", self)
         self.edit_indicator.setStyleSheet(
@@ -273,12 +289,12 @@ class FaceDoodleWindow(QMainWindow):
         # ── Animation timeline ──
         self.anim_timeline = AnimationTimeline(self.animation_queue)
         self.anim_timeline.setVisible(False)
-        root.addWidget(self.anim_timeline)
+        bottom_layout.addWidget(self.anim_timeline)
 
         # ── Chat message panel ──
         self.chat_panel = ChatMessagePanel()
         self.chat_panel.setStyleSheet(f"background: {CANVAS}; border-top: 1px solid {HAIRLINE};")
-        root.addWidget(self.chat_panel)
+        bottom_layout.addWidget(self.chat_panel)
 
         # ── 3. 输入区 ──
         input_row = QWidget()
@@ -379,13 +395,17 @@ class FaceDoodleWindow(QMainWindow):
         self.edit_sticker_btn.clicked.connect(self._open_edit_sticker_dialog)
         action_layout.addWidget(self.edit_sticker_btn)
 
-        root.addWidget(action_row)
+        bottom_layout.addWidget(action_row)
 
         # ── 4.5 面部绘制工具栏 ──
         self._init_face_draw_toolbar()
-        root.addWidget(self.face_draw_toolbar)
+        bottom_layout.addWidget(self.face_draw_toolbar)
 
-        # ── 5. 状态栏 ──
+        v_splitter.addWidget(bottom_widget)
+        v_splitter.setSizes([600, 80])
+        root.addWidget(v_splitter, stretch=1)
+
+        # ── 5. 状态栏（固定在底部，不随拖拽移动）──
         self.status_label = QLabel("Ctrl+E 编辑 | Ctrl+D 面部绘制 | 左键移动 右键旋转 滚轮缩放 双击重置")
         self.status_label.setStyleSheet(
             f"color: {INK_MUTED_48}; {font_css('fine-print')} padding: 5px; background: {CANVAS}; border-top: 1px solid {HAIRLINE};"
@@ -591,8 +611,7 @@ class FaceDoodleWindow(QMainWindow):
             self._update_gallery_info()
             return
 
-        stickers = storage.load_gallery()
-        groups = storage.load_groups()
+        stickers, groups = storage.load_index_data()
 
         grouped = {}
         ungrouped = []
@@ -621,7 +640,11 @@ class FaceDoodleWindow(QMainWindow):
             if not members:
                 continue
             section_id = f"__grp_{g['id']}"
-            self.gallery.add_section_header(section_id, g.get("name", "未命名"), len(members))
+            self.gallery.add_section_header(section_id, g.get("name", "未命名"), len(members),
+                                            group_id=g["id"])
+            header = self.gallery.get_section_header(section_id)
+            if header:
+                header.loadGroupRequested.connect(self._on_load_group)
             for s in members:
                 card = _create_card(s)
                 self.gallery.add_card(card, section_id=section_id)
@@ -701,6 +724,14 @@ class FaceDoodleWindow(QMainWindow):
                 self.gallery_queue.put(GalAddSticker(sticker_id=sid))
         self._gallery_selected_ids.clear()
         self._update_gallery_selection_visuals()
+
+    def _on_load_group(self, group_id):
+        groups = storage.load_groups()
+        group = next((g for g in groups if g["id"] == group_id), None)
+        if not group:
+            return
+        for sid in group.get("member_ids", []):
+            self.gallery_queue.put(GalAddSticker(sticker_id=sid))
 
     def _on_sticker_saved(self, sticker_id):
         self._current_sticker_id = sticker_id
@@ -804,6 +835,7 @@ class FaceDoodleWindow(QMainWindow):
 
     def _open_drawing_dialog(self):
         dlg = DrawingDialog(self, self.gallery_queue, self.command_queue)
+        dlg.showMaximized()
         if dlg.exec_() == DrawingDialog.Accepted:
             self._load_gallery()
 
@@ -816,6 +848,7 @@ class FaceDoodleWindow(QMainWindow):
             QMessageBox.warning(self, "错误", "无法加载该贴纸，文件可能已被删除。")
             return
         dlg = DrawingDialog(self, self.gallery_queue, self.command_queue, initial_sticker=sticker_img)
+        dlg.showMaximized()
         if dlg.exec_() == DrawingDialog.Accepted:
             self._load_gallery()
 
@@ -866,8 +899,7 @@ class FaceDoodleWindow(QMainWindow):
             else:
                 disk_cfg = {}
             update_fn(disk_cfg)
-            with open("config.json", "w", encoding="utf-8") as f:
-                json.dump(disk_cfg, f, ensure_ascii=False, indent=2)
+            save_config(disk_cfg)
         except Exception as e:
             print(f"[UI] 保存 config.json 失败: {e}")
 
@@ -896,17 +928,110 @@ class FaceDoodleWindow(QMainWindow):
         self._update_config_json(lambda cfg: cfg.setdefault("generation", {}).update(symmetry_enabled=enabled))
 
     def _show_settings(self):
-        from app.utils.config_loader import get_config
         cfg = get_config()
-        prefs = cfg.get("preferences", {})
-        recent = prefs.get("recent_prompts", [])
-        info = (
-            f"ComfyUI 地址: {cfg['comfyui']['server_address']}\n"
-            f"LoRA: {cfg['model']['lora']['name']}\n"
-            f"AI 模型: {cfg['agent']['model_id']}\n"
-            f"最近指令: {', '.join(recent[:5]) if recent else '无'}"
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("设置")
+        dlg.setMinimumWidth(420)
+        dlg.setStyleSheet(global_stylesheet())
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
+
+        # ── ComfyUI ──
+        grp_comfy = QGroupBox("ComfyUI")
+        form_comfy = QFormLayout(grp_comfy)
+        addr_edit = QLineEdit(cfg["comfyui"]["server_address"])
+        addr_edit.setPlaceholderText("127.0.0.1:8188")
+        form_comfy.addRow("服务器地址", addr_edit)
+        timeout_spin = QSpinBox()
+        timeout_spin.setRange(30, 600)
+        timeout_spin.setValue(cfg["comfyui"]["generate_timeout"])
+        timeout_spin.setSuffix(" 秒")
+        form_comfy.addRow("生成超时", timeout_spin)
+        layout.addWidget(grp_comfy)
+
+        # ── AI ──
+        grp_ai = QGroupBox("AI 模型")
+        form_ai = QFormLayout(grp_ai)
+        model_combo = QComboBox()
+        model_combo.setEditable(True)
+        model_combo.addItems(["deepseek-chat", "deepseek-reasoner"])
+        current_model = cfg["agent"]["model_id"]
+        model_combo.setCurrentText(current_model)
+        form_ai.addRow("模型", model_combo)
+        layout.addWidget(grp_ai)
+
+        # ── LoRA ──
+        grp_lora = QGroupBox("LoRA")
+        form_lora = QFormLayout(grp_lora)
+        lora_edit = QLineEdit(cfg["model"]["lora"]["name"])
+        lora_edit.setPlaceholderText("xxx.safetensors")
+        form_lora.addRow("名称", lora_edit)
+        lora_sm = QDoubleSpinBox()
+        lora_sm.setRange(0.0, 3.0)
+        lora_sm.setSingleStep(0.1)
+        lora_sm.setValue(cfg["model"]["lora"]["strength_model"])
+        form_lora.addRow("Model 强度", lora_sm)
+        lora_sc = QDoubleSpinBox()
+        lora_sc.setRange(0.0, 3.0)
+        lora_sc.setSingleStep(0.1)
+        lora_sc.setValue(cfg["model"]["lora"]["strength_clip"])
+        form_lora.addRow("Clip 强度", lora_sc)
+        layout.addWidget(grp_lora)
+
+        # ── 生成 ──
+        grp_gen = QGroupBox("生成")
+        form_gen = QFormLayout(grp_gen)
+        sym_cb = QCheckBox("开启对称构图")
+        sym_cb.setChecked(cfg.get("generation", {}).get("symmetry_enabled", False))
+        form_gen.addRow("", sym_cb)
+        region_combo = QComboBox()
+        region_combo.addItems(["head_top", "forehead_top", "forehead_full", "brows",
+                               "eyes", "nose", "mouth", "cheek_left", "cheek_right", "chin", "jaw"])
+        default_region = cfg.get("preferences", {}).get("default_region", "forehead_top")
+        region_combo.setCurrentText(default_region)
+        form_gen.addRow("默认区域", region_combo)
+        scale_spin = QDoubleSpinBox()
+        scale_spin.setRange(0.3, 2.0)
+        scale_spin.setSingleStep(0.1)
+        scale_spin.setValue(cfg.get("preferences", {}).get("default_scale", 1.0))
+        form_gen.addRow("默认缩放", scale_spin)
+        layout.addWidget(grp_gen)
+
+        # ── 按钮 ──
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setFixedWidth(80)
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_layout.addWidget(cancel_btn)
+        save_btn = QPushButton("保存")
+        save_btn.setFixedWidth(80)
+        save_btn.setStyleSheet(
+            f"QPushButton {{ background: {PRIMARY}; color: #fff; border: none; "
+            f"border-radius: {ROUNDED['sm']}; padding: 6px 14px; font-weight: 600; }}"
+            f"QPushButton:hover {{ opacity: 0.9; }}"
         )
-        QMessageBox.information(self, "设置", info)
+        btn_layout.addWidget(save_btn)
+        layout.addLayout(btn_layout)
+
+        def on_save():
+            cfg["comfyui"]["server_address"] = addr_edit.text().strip()
+            cfg["comfyui"]["generate_timeout"] = timeout_spin.value()
+            cfg["agent"]["model_id"] = model_combo.currentText().strip()
+            cfg["model"]["lora"]["name"] = lora_edit.text().strip()
+            cfg["model"]["lora"]["strength_model"] = lora_sm.value()
+            cfg["model"]["lora"]["strength_clip"] = lora_sc.value()
+            cfg.setdefault("generation", {})["symmetry_enabled"] = sym_cb.isChecked()
+            cfg.setdefault("preferences", {})["default_region"] = region_combo.currentText()
+            cfg.setdefault("preferences", {})["default_scale"] = scale_spin.value()
+            save_config(cfg)
+            dlg.accept()
+
+        save_btn.clicked.connect(on_save)
+        dlg.exec_()
 
     # ── 编辑模式 ──
 
@@ -1026,7 +1151,7 @@ class FaceDoodleWindow(QMainWindow):
                 dlg.set_error(msg.error)
             else:
                 # Refresh gallery to show new animated sticker
-                self._refresh_gallery()
+                self._load_gallery()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

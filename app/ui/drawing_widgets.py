@@ -7,7 +7,7 @@ import subprocess
 
 from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit, QPushButton,
                              QHBoxLayout, QVBoxLayout, QSlider, QColorDialog,
-                             QComboBox, QDialog, QGridLayout)
+                             QComboBox, QDialog, QGridLayout, QScrollArea)
 from PyQt5.QtGui import QPainter, QColor, QPen, QImage, QPixmap
 from PyQt5.QtCore import Qt, QTimer, QEvent
 
@@ -20,12 +20,14 @@ from app.ui.theme import (PRIMARY, CANVAS, PARCHMENT, INK, INK_MUTED_48,
 
 
 class DrawingCanvas(QWidget, BrushStateMixin):
-    CANVAS_SIZE = 512
+    CANVAS_SIZE = 800
 
     def __init__(self, parent=None):
         QWidget.__init__(self, parent)
         BrushStateMixin.__init__(self)
-        self.setFixedSize(self.CANVAS_SIZE, self.CANVAS_SIZE)
+        self.setMinimumSize(400, 400)
+        self.setMaximumSize(2400, 2400)
+        self.resize(self.CANVAS_SIZE, self.CANVAS_SIZE)
         self.setCursor(Qt.CrossCursor)
         self.setMouseTracking(True)
 
@@ -37,9 +39,15 @@ class DrawingCanvas(QWidget, BrushStateMixin):
         self._last_pos = None
         self._drawing_active = False
         self._tablet_in_use = False
+        self._zoom = 1.0
+        self._space_held = False
+        self._panning = False
+        self._pan_start = None
+        self._scroll_area = None
 
         self._checker = self._make_checkerboard()
         self.setTabletTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
 
     def _make_checkerboard(self):
         grid = 8
@@ -109,17 +117,18 @@ class DrawingCanvas(QWidget, BrushStateMixin):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.drawPixmap(0, 0, self._checker)
+        _, draw_size, ox, oy = self._get_transform()
+        painter.drawPixmap(ox, oy, draw_size, draw_size, self._checker)
         pix = _bgra_to_qpixmap(self._drawing)
         if pix is not None:
-            painter.drawPixmap(0, 0, pix)
+            painter.drawPixmap(ox, oy, draw_size, draw_size, pix)
         if self._mirror_mode:
             c = QColor(PRIMARY)
             c.setAlpha(180)
             pen = QPen(c, 1, Qt.DashLine)
             painter.setPen(pen)
-            cx = self.CANVAS_SIZE // 2
-            painter.drawLine(cx, 0, cx, self.CANVAS_SIZE)
+            cx = ox + draw_size // 2
+            painter.drawLine(cx, oy, cx, oy + draw_size)
 
     def _push_undo(self):
         self._undo_stack.append(self._drawing.copy())
@@ -131,7 +140,25 @@ class DrawingCanvas(QWidget, BrushStateMixin):
 
     def _draw_stroke(self, p1, p2):
         color = (0, 0, 0, 0) if self._eraser_mode else self._brush_color
-        self._draw_stroke_at(p1.x(), p1.y(), p2.x(), p2.y(), color)
+        cx1, cy1 = self._widget_to_canvas(p1)
+        cx2, cy2 = self._widget_to_canvas(p2)
+        self._draw_stroke_at(cx1, cy1, cx2, cy2, color)
+
+    def _get_transform(self):
+        w, h = self.width(), self.height()
+        scale = (min(w, h) / self.CANVAS_SIZE) * self._zoom
+        draw_size = int(self.CANVAS_SIZE * scale)
+        ox = (w - draw_size) // 2
+        oy = (h - draw_size) // 2
+        return scale, draw_size, ox, oy
+
+    def _widget_to_canvas(self, pos):
+        scale, draw_size, ox, oy = self._get_transform()
+        if scale <= 0:
+            return int(pos.x()), int(pos.y())
+        cx = int((pos.x() - ox) / scale)
+        cy = int((pos.y() - oy) / scale)
+        return cx, cy
 
     def _draw_stroke_at(self, x1, y1, x2, y2, color):
         spacing_px, scatter_px, opacity_scale = self._resolve_spacing_scatter()
@@ -148,22 +175,49 @@ class DrawingCanvas(QWidget, BrushStateMixin):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and not self._tablet_in_use:
-            self._push_undo()
-            self._drawing_active = True
-            self._last_pos = event.pos()
-            self._draw_stroke(event.pos(), event.pos())
-            self.update()
+            if self._space_held:
+                self._panning = True
+                self._pan_start = event.globalPos()
+                self.setCursor(Qt.ClosedHandCursor)
+            else:
+                self._push_undo()
+                self._drawing_active = True
+                self._last_pos = event.pos()
+                self._draw_stroke(event.pos(), event.pos())
+                self.update()
 
     def mouseMoveEvent(self, event):
-        if self._drawing_active and self._last_pos is not None and not self._tablet_in_use:
+        if self._panning and self._pan_start is not None:
+            delta = event.globalPos() - self._pan_start
+            self._pan_start = event.globalPos()
+            if self._scroll_area:
+                self._scroll_area.horizontalScrollBar().setValue(
+                    self._scroll_area.horizontalScrollBar().value() - delta.x())
+                self._scroll_area.verticalScrollBar().setValue(
+                    self._scroll_area.verticalScrollBar().value() - delta.y())
+        elif self._drawing_active and self._last_pos is not None and not self._tablet_in_use:
             self._draw_stroke(self._last_pos, event.pos())
             self._last_pos = event.pos()
             self.update()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and not self._tablet_in_use:
-            self._drawing_active = False
-            self._last_pos = None
+        if event.button() == Qt.LeftButton:
+            if self._panning:
+                self._panning = False
+                self._pan_start = None
+                self._update_cursor()
+            elif not self._tablet_in_use:
+                self._drawing_active = False
+                self._last_pos = None
+
+    def set_scroll_area(self, scroll_area):
+        self._scroll_area = scroll_area
+
+    def _update_cursor(self):
+        if self._space_held:
+            self.setCursor(Qt.OpenHandCursor)
+        else:
+            self.setCursor(Qt.CrossCursor)
 
     def tabletEvent(self, event):
         t = event.type()
@@ -195,6 +249,28 @@ class DrawingCanvas(QWidget, BrushStateMixin):
         else:
             super().tabletEvent(event)
 
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        factor = 1.1 if delta > 0 else 0.9
+        self._zoom = max(0.25, min(4.0, self._zoom * factor))
+        size = int(self.CANVAS_SIZE * self._zoom)
+        self.resize(size, size)
+        self.update()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            self._space_held = True
+            self._update_cursor()
+        else:
+            super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            self._space_held = False
+            self._update_cursor()
+        else:
+            super().keyReleaseEvent(event)
+
 
 class DrawingDialog(QDialog):
     def __init__(self, parent, gallery_queue, command_queue=None, initial_sticker=None):
@@ -202,7 +278,8 @@ class DrawingDialog(QDialog):
         self.gallery_queue = gallery_queue
         self.command_queue = command_queue
         self.setWindowTitle("绘制贴纸")
-        self.setFixedSize(1100, 720)
+        self.resize(1100, 720)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
         self.setStyleSheet(f"""
             QDialog {{ background: {CANVAS}; }}
             QLabel {{ color: {INK}; {font_css('caption')} }}
@@ -370,12 +447,13 @@ class DrawingDialog(QDialog):
         left_layout.addStretch()
         body_row.addWidget(left_sidebar)
 
-        canvas_container = QWidget()
-        canvas_container.setStyleSheet(f"background: {CANVAS}; border: 1px solid {HAIRLINE}; border-radius: {ROUNDED['sm']}; padding: 6px;")
-        canvas_layout = QVBoxLayout(canvas_container)
-        canvas_layout.setContentsMargins(4, 4, 4, 4)
-        canvas_layout.addWidget(self.canvas, alignment=Qt.AlignCenter)
-        body_row.addWidget(canvas_container, alignment=Qt.AlignCenter)
+        canvas_scroll = QScrollArea()
+        canvas_scroll.setStyleSheet(f"QScrollArea {{ background: {CANVAS}; border: 1px solid {HAIRLINE}; border-radius: {ROUNDED['sm']}; }}")
+        canvas_scroll.setWidgetResizable(False)
+        canvas_scroll.setWidget(self.canvas)
+        canvas_scroll.setAlignment(Qt.AlignCenter)
+        self.canvas.set_scroll_area(canvas_scroll)
+        body_row.addWidget(canvas_scroll, stretch=1)
 
         # ── 右侧工具栏 ──
         right_sidebar = QWidget()

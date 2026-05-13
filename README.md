@@ -99,7 +99,7 @@ Windows 下 OpenCV 不支持中文路径，PNG 文件名请用英文，笔刷名
 
 ### Python 依赖
 
-完整列表见 `requirement.txt`，核心依赖：`opencv-python` `mediapipe` `PyQt5` `openai` `aiohttp` `numpy`
+完整列表见 `requirements.txt`，核心依赖：`opencv-python` `mediapipe` `PyQt5` `openai` `aiohttp` `numpy`
 
 ### ComfyUI 依赖
 
@@ -114,7 +114,7 @@ Windows 下 OpenCV 不支持中文路径，PNG 文件名请用英文，笔刷名
 
 ```bash
 # 1. 安装依赖
-pip install -r requirement.txt
+pip install -r requirements.txt
 
 # 2. 设置 API Key（二选一，推荐方式 A）
 #    方式 A: 在项目根目录创建 api_key.txt，写入 DeepSeek key（程序只读不写，不会丢失）
@@ -233,7 +233,7 @@ FaceDoodle/
 │   └── check_syntax.py          # Pre-commit 语法检查脚本
 ├── tests/                       # pytest 测试套件（253 个用例）
 ├── config.json                  # 应用配置
-├── requirement.txt              # Python 依赖
+├── requirements.txt              # Python 依赖
 ├── .pre-commit-config.yaml      # Git 提交前验证关卡
 └── README.md
 ```

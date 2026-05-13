@@ -368,6 +368,9 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             while not self.stop_event.is_set():
                 frame = self._get_frame()
                 if frame is None:
+                    self._process_command_queue()
+                    self._process_result_queue()
+                    time.sleep(0.01)
                     continue
 
                 self._process_command_queue()

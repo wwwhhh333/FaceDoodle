@@ -109,6 +109,19 @@ def get_config():
     return _config
 
 
+def save_config(cfg=None, config_path="config.json"):
+    """Persist in-memory config to disk. Returns True on success."""
+    if cfg is None:
+        cfg = get_config()
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        return True
+    except (OSError, IOError) as e:
+        print(f"[Config] 保存失败: {e}")
+        return False
+
+
 def _deep_merge(base, override):
     for key, value in override.items():
         if key in base and isinstance(base[key], dict) and isinstance(value, dict):

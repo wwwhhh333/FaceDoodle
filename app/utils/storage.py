@@ -75,6 +75,12 @@ def load_gallery():
     return _load_index().get("stickers", [])
 
 
+def load_index_data():
+    """Return (stickers, groups) from a single disk read."""
+    index = _load_index()
+    return index.get("stickers", []), index.get("groups", [])
+
+
 def save_group(group_name, member_ids, group_id=None):
     """Create or update a sticker group. Returns group_id."""
     if group_id is None:
