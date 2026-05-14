@@ -8,7 +8,6 @@
 - 底部聊天面板，自然语言描述需求（例如"海盗风格，给我眼罩和帽子"）
 - DeepSeek 多轮对话解析意图，支持三种操作：
   - **生成** — 单/多贴纸生成，自动选面部区域和缩放
-  - **调整** — 移动/旋转/缩放已有贴纸（例如"往左一点""缩小"）
   - **反问** — 需求不明确时主动澄清
 - ComfyUI SDXL + Layer Diffusion 生成透明背景贴纸
 - 无 API Key 时自动降级为关键词匹配（50+ 中文关键词覆盖 12 个面部区域）
@@ -225,7 +224,7 @@ FaceDoodle/
 │   │   ├── drawing_widgets.py   # 绘制相关组件
 │   │   ├── animation_timeline.py # 动画时间轴面板
 │   │   ├── animation_gen_dialog.py # 动画生成对话框
-│   │   └── theme.py             # Apple 风格主题色板与字体
+│   │   └── theme.py             # 主题色板与字体
 │   ├── utils/
 │   │   ├── config_loader.py     # 配置文件加载
 │   │   ├── image_proc.py        # 图像加载与预处理

@@ -24,7 +24,8 @@
     }
   },
   "generation": {
-    "negative_prompt": "photo, realistic, 3D render, shadow, complex background, blur, noisy edges, text, watermark, signature, low quality, jpeg artifacts",
+    "negative_prompt": "photo, realistic, 3D render, shadow, complex background, blur, noisy edges, text, watermark, signature, low quality, jpeg artifacts, face, person, body, human, character, portrait, skin, hair",
+    "positive_suffix": "isolated accessory on white background, no face, no person, product shot, floating object",
     "symmetry_enabled": true,
     "symmetry_positive_suffix": "symmetrical design, perfectly mirrored, balanced composition",
     "symmetry_negative_suffix": "asymmetrical, uneven, unbalanced, lopsided"

@@ -189,7 +189,7 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
                     new_sticker = load_rgba_sticker(mock_path)
                 else:
                     comfy_client = ComfyClient()
-                    print(f"[AI Worker] ComfyUI 生成: {task['prompt'][:60]}...")
+                    print(f"[AI Worker] 生成提示词: {task['prompt']}")
                     image_path = comfy_client.generate_sync(
                         prompt_text=task["prompt"],
                         workflow_name=workflow,

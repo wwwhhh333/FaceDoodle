@@ -37,16 +37,6 @@ REGION_DISPLAY = {
 }
 
 
-def _estimate_scale(region, keyword):
-    large = {"猫耳", "兔耳", "耳朵", "帽子", "皇冠", "光环", "犄角", "触角", "王冠", "发带", "头巾", "护目镜"}
-    small = {"鼻子", "猪鼻", "小丑鼻", "红鼻子", "雀斑", "爱心", "星星", "睫毛", "眉毛", "美瞳"}
-    if keyword in large:
-        return 1.4
-    if keyword in small:
-        return 0.5
-    return 1.0
-
-
 KEYWORD_REGION_MAP = {
     "head_top": ["猫耳", "兔耳", "耳朵", "帽子", "皇冠", "光环", "王冠", "犄角"],
     "forehead_top": ["触角", "发箍", "头箍"],
@@ -58,15 +48,43 @@ KEYWORD_REGION_MAP = {
     "cheek_left": ["腮红", "面纹", "伤疤", "雀斑", "脸红", "纹身", "刀疤", "爱心", "星星", "脸", "面"],
 }
 
-BASE_SYSTEM_PROMPT = """你是一个 AR 滤镜设计师助手。根据用户描述判断意图，输出 JSON。
+BASE_SYSTEM_PROMPT = """你是一个 AR 滤镜设计师助手，负责将用户的中文描述转化为 JSON 格式的贴纸生成指令。
+
+## 核心概念
+- 贴纸是独立的装饰物/配件，像商品摄影图：孤立的物体放在纯色背景上，不附着于任何人的身体
+- 绝不描述人脸、身体、皮肤、头发——只描述配件本身
+- 想象你在拍一件商品的俯视图（flat lay / front view），拍的是物品而不是戴物品的人
 
 ## 输出格式
 
 ### 生成新贴纸 (generate):
-{"action": "generate", "message": "给你加了一副墨镜~", "tasks": [{"prompt": "英文提示词", "region": "eyes", "scale": 1.0}]}
+{"action": "generate", "message": "给你加了一副墨镜~", "tasks": [{"prompt": "英文提示词", "region": "eyes"}]}
 
 ### 需要澄清 (ask):
 {"action": "ask", "message": "海盗主题通常包含眼罩和帽子，你想要哪些？"}
+
+## prompt 编写规范
+- 用英文，≤25 词
+- 必须包含 "isolated {object}, no face, no person, on white background"
+- 用以下措辞让模型理解这是独立物体而非人在佩戴：
+  | 错误（会画出人脸） | 正确（只画配件） |
+  |---|---|
+  | cat ears | cat ears, detached, no headband, no face, floating ears |
+  | sunglasses | isolated sunglasses, eyewear, product shot |
+  | eye patch | isolated pirate eye patch, single eyepatch |
+  | lipstick | isolated lipstick tube, cosmetic product |
+  | beard | fake beard prop, costume accessory |
+  | scar | scar sticker, wound decal |
+
+## region → prompt 风格指引
+- head_top → 头饰/发箍/帽子类："headwear, hair accessory, headband, hat"
+- forehead_top/forehead_full → 额饰/发带类："headband, forehead jewelry, hair ornament"
+- eyes → 眼镜/眼罩类："eyewear, isolated glasses, eye patch, floating sunglasses"
+- nose → 鼻子贴纸类："nose sticker, snout accessory, animal nose, isolated"
+- mouth → 嘴部装饰类："fake beard, teeth accessory, lip sticker, mouth decal"
+- cheek_left/cheek_right → 面纹类："face sticker, cheek decal, face paint patch"
+- chin/jaw → 下颌装饰类："chin accessory, jaw sticker, isolated"
+- brows → 眉毛类："eyebrow sticker, brow decal, isolated eyebrows"
 
 ## message 规则
 - generate 必须带 message，简短中文描述做了什么，例如"给你加了墨镜"
@@ -75,9 +93,6 @@ BASE_SYSTEM_PROMPT = """你是一个 AR 滤镜设计师助手。根据用户描�
 
 ## 规则
 - 单张贴纸也用 tasks 数组(一个元素)
-- prompt 用英文，front view, flat lay, icon style，≤20词
-- region: head_top/forehead_top/forehead_full/brows/eyes/nose/mouth/cheek_left/cheek_right/chin/jaw
-- scale 0.3~2.0, 大型=1.3~1.8, 中型=0.9~1.2, 小型=0.3~0.7
 - 能拆成独立贴纸的用 generate + 多 tasks
 - 要求修改外观(颜色/形状)用 generate 重新生成
 - 只有确实不确定时才用 ask"""
@@ -189,15 +204,10 @@ class FaceDoodleAgent:
             if not prompt:
                 continue
             region = self._normalize_region(t.get("region", "eyes"))
-            try:
-                scale = float(t.get("scale", 1.0))
-            except (TypeError, ValueError):
-                scale = 1.0
-            scale = max(0.3, min(2.0, scale))
             clean.append({
                 "prompt": build_positive_prompt(prompt),
                 "region": region,
-                "scale": scale,
+                "scale": 1.0,
             })
         return clean
 
@@ -215,9 +225,8 @@ class FaceDoodleAgent:
         region, kw = self._keyword_fallback(user_input)
         if region is None:
             region = "eyes"
-        scale = _estimate_scale(region, kw) if kw else 1.0
         display_region = REGION_DISPLAY.get(region, region)
-        print(f"[Agent] 使用{'关键词' if kw else '默认'} fallback: {region}, scale={scale}")
+        print(f"[Agent] 使用{'关键词' if kw else '默认'} fallback: {region}")
 
         if kw:
             messages = [
@@ -235,7 +244,7 @@ class FaceDoodleAgent:
             "tasks": [{
                 "prompt": build_positive_prompt(user_input),
                 "region": region,
-                "scale": scale,
+                "scale": 1.0,
             }],
             "workflow": "transparent_workflow_api.json"
         }
@@ -294,12 +303,7 @@ class FaceDoodleAgent:
                 if not tasks:
                     prompt = str(data.get("prompt", "")).strip() or user_message
                     region = self._normalize_region(data.get("region", "eyes"))
-                    try:
-                        scale = float(data.get("scale", 1.0))
-                    except (TypeError, ValueError):
-                        scale = 1.0
-                    scale = max(0.3, min(2.0, scale))
-                    tasks = [{"prompt": build_positive_prompt(prompt), "region": region, "scale": scale}]
+                    tasks = [{"prompt": build_positive_prompt(prompt), "region": region, "scale": 1.0}]
 
                 if not message:
                     locations = [REGION_DISPLAY.get(t.get("region", ""), t.get("region", "?")) for t in tasks]
@@ -346,6 +350,6 @@ class FaceDoodleAgent:
         return {
             "positive_prompt": task["prompt"],
             "target_location": task["region"],
-            "scale": task["scale"],
+            "scale": 1.0,
             "workflow": result.get("workflow", "transparent_workflow_api.json")
         }

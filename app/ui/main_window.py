@@ -965,7 +965,7 @@ class FaceDoodleWindow(QMainWindow):
         timeout_spin.setSuffix(" 秒")
         form_comfy.addRow("生成超时", timeout_spin)
         install_edit = QLineEdit(cfg["comfyui"].get("install_path", ""))
-        install_edit.setPlaceholderText("留空则手动启动 ComfyUI")
+        install_edit.setPlaceholderText("ComfyUI 目录或 .bat 文件，留空则手动启动")
         form_comfy.addRow("安装路径", install_edit)
         layout.addWidget(grp_comfy)
 

@@ -32,7 +32,8 @@ DEFAULT_CONFIG = {
         }
     },
     "generation": {
-        "negative_prompt": "photo, realistic, 3D render, shadow, complex background, blur, noisy edges, text, watermark, signature, low quality, jpeg artifacts",
+        "negative_prompt": "photo, realistic, 3D render, shadow, complex background, blur, noisy edges, text, watermark, signature, low quality, jpeg artifacts, face, person, body, human, character, portrait, skin, hair",
+        "positive_suffix": "isolated accessory on white background, no face, no person, product shot, floating object",
         "symmetry_enabled": False,
         "symmetry_positive_suffix": "symmetrical design, perfectly mirrored, balanced composition",
         "symmetry_negative_suffix": "asymmetrical, uneven, unbalanced, lopsided"
@@ -187,15 +188,19 @@ def get_selected_preset():
     return presets.get(key, {})
 
 
+def _append_suffix(text, suffix):
+    if not suffix or not text:
+        return text
+    return text.rstrip().rstrip(',') + ", " + suffix
+
+
 def build_positive_prompt(prompt_text):
-    """Wrap user prompt in style template, then append symmetry keywords if enabled."""
+    """Wrap user prompt in style template, then append isolation + symmetry keywords."""
     prompt = build_styled_prompt(prompt_text)
-    config = get_config()
-    gen = config.get("generation", {})
+    gen = get_config().get("generation", {})
+    prompt = _append_suffix(prompt, gen.get("positive_suffix", "").strip())
     if gen.get("symmetry_enabled", False):
-        suffix = gen.get("symmetry_positive_suffix", "").strip()
-        if suffix and prompt:
-            prompt = prompt.rstrip().rstrip(',') + ", " + suffix
+        prompt = _append_suffix(prompt, gen.get("symmetry_positive_suffix", "").strip())
     return prompt
 
 
@@ -212,7 +217,5 @@ def build_negative_prompt(override=None):
         "photo, realistic, 3D render, shadow, complex background, blur, noisy edges, text, watermark, signature, low quality, jpeg artifacts",
     )
     if gen.get("symmetry_enabled", False):
-        suffix = gen.get("symmetry_negative_suffix", "").strip()
-        if suffix and base:
-            base = base.rstrip().rstrip(',') + ", " + suffix
+        base = _append_suffix(base, gen.get("symmetry_negative_suffix", "").strip())
     return base

@@ -78,6 +78,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
         x_off = (self.CANVAS_SIZE - w) // 2
         self._drawing[y_off:y_off + h, x_off:x_off + w] = bgra
         self._undo_stack.clear()
+        self._reset_zoom()
         self.update()
 
     def get_result(self):
@@ -112,6 +113,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
     def clear_canvas(self):
         self._undo_stack.append(self._drawing.copy())
         self._drawing = np.zeros((self.CANVAS_SIZE, self.CANVAS_SIZE, 4), dtype=np.uint8)
+        self._reset_zoom()
         self.update()
 
     def paintEvent(self, event):
@@ -146,7 +148,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
 
     def _get_transform(self):
         w, h = self.width(), self.height()
-        scale = (min(w, h) / self.CANVAS_SIZE) * self._zoom
+        scale = min(w, h) / self.CANVAS_SIZE
         draw_size = int(self.CANVAS_SIZE * scale)
         ox = (w - draw_size) // 2
         oy = (h - draw_size) // 2
@@ -221,6 +223,29 @@ class DrawingCanvas(QWidget, BrushStateMixin):
 
     def tabletEvent(self, event):
         t = event.type()
+        if self._space_held:
+            if t == QEvent.TabletPress:
+                self._tablet_in_use = True
+                self._panning = True
+                self._pan_start = event.globalPos()
+                self.setCursor(Qt.ClosedHandCursor)
+                event.accept()
+            elif t == QEvent.TabletMove and self._panning:
+                delta = event.globalPos() - self._pan_start
+                self._pan_start = event.globalPos()
+                if self._scroll_area:
+                    self._scroll_area.horizontalScrollBar().setValue(
+                        self._scroll_area.horizontalScrollBar().value() - delta.x())
+                    self._scroll_area.verticalScrollBar().setValue(
+                        self._scroll_area.verticalScrollBar().value() - delta.y())
+                event.accept()
+            elif t == QEvent.TabletRelease:
+                self._panning = False
+                self._pan_start = None
+                self._tablet_in_use = False
+                self._update_cursor()
+                event.accept()
+            return
         if t == QEvent.TabletPress:
             self._tablet_in_use = True
             self.set_pressure(event.pressure())
@@ -249,7 +274,14 @@ class DrawingCanvas(QWidget, BrushStateMixin):
         else:
             super().tabletEvent(event)
 
+    def _reset_zoom(self):
+        self._zoom = 1.0
+        self.resize(self.CANVAS_SIZE, self.CANVAS_SIZE)
+        self.update()
+
     def wheelEvent(self, event):
+        if self._drawing_active:
+            return  # ignore scroll during drawing to avoid coordinate shift
         delta = event.angleDelta().y()
         factor = 1.1 if delta > 0 else 0.9
         self._zoom = max(0.25, min(4.0, self._zoom * factor))

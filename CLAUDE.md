@@ -12,7 +12,7 @@ python app/main.py
 python app/main.py --mock
 ```
 
-API key priority: env var `DEEPSEEK_API_KEY`/`MODELSCOPE_API_KEY` → `api_key.txt` (project root) → `config.json` `api_key` field. `api_key.txt` is gitignored and never written by the app (unlike config.json which is rewritten on close). ComfyUI must be running at the address in `config.json` (`comfyui.server_address`, default `127.0.0.1:8188`).
+API key priority: env var `DEEPSEEK_API_KEY` → `api_key.txt` (project root) → `config.json` `api_key` field. `api_key.txt` is gitignored and never written by the app (unlike config.json which is rewritten on close). ComfyUI must be running at the address in `config.json` (`comfyui.server_address`, default `127.0.0.1:8188`).
 
 ## Tests
 

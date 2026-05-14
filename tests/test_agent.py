@@ -3,7 +3,7 @@
 import pytest
 
 from app.ai.agent import (
-    _estimate_scale, FaceDoodleAgent,
+    FaceDoodleAgent,
     REGION_GROUPS, REGION_ALIASES, KEYWORD_REGION_MAP,
 )
 
@@ -12,25 +12,6 @@ from app.ai.agent import (
 def agent():
     """Agent with no API key — always uses keyword fallback."""
     return FaceDoodleAgent(api_key=None)
-
-
-# ── _estimate_scale (module-level) ──
-
-def test_estimate_scale_large():
-    assert _estimate_scale("head_top", "猫耳") == 1.4
-    assert _estimate_scale("head_top", "帽子") == 1.4
-    assert _estimate_scale("head_top", "皇冠") == 1.4
-
-
-def test_estimate_scale_small():
-    assert _estimate_scale("nose", "鼻子") == 0.5
-    assert _estimate_scale("nose", "雀斑") == 0.5
-    assert _estimate_scale("cheek_left", "爱心") == 0.5
-
-
-def test_estimate_scale_default():
-    assert _estimate_scale("eyes", "眼镜") == 1.0
-    assert _estimate_scale("mouth", "口罩") == 1.0
 
 
 # ── _parse_json_text ──
@@ -150,7 +131,7 @@ def test_build_fallback_result_with_match(agent):
     assert len(result["tasks"]) == 1
     task = result["tasks"][0]
     assert task["region"] == "head_top"
-    assert task["scale"] == 1.4
+    assert task["scale"] == 1.0
     assert len(task["prompt"]) > 0
     assert result["workflow"] == "transparent_workflow_api.json"
 
@@ -169,7 +150,7 @@ def test_build_fallback_result_no_match(agent):
 def test_parse_command_uses_fallback(agent):
     result = agent.parse_command("猫耳")
     assert result["target_location"] == "head_top"
-    assert result["scale"] == 1.4
+    assert result["scale"] == 1.0
     assert "workflow" in result
 
 

@@ -113,7 +113,7 @@ def _show_first_run_setup(current_key):
 
 
 def _resolve_api_key(config):
-    key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("MODELSCOPE_API_KEY")
+    key = os.getenv("DEEPSEEK_API_KEY")
     if key:
         return key
     key_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "api_key.txt")
