@@ -348,6 +348,9 @@ class DispActiveStickersChanged:
     active_count: int = 0
     instances: list = field(default_factory=list)
     edit_target_id: Optional[str] = None
+    face_center_x: float = 0.0
+    face_center_y: float = 0.0
+    face_width: float = 0.0
 
 
 @dataclass

@@ -357,6 +357,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self.max_conversation_turns = 6  # keep last 6 messages (3 turns)
 
         self._last_synced_state = None   # fingerprint to skip no-op _sync_state_to_ui pushes
+        self._last_face_fp = None        # (fc_x, fc_y, fw) for change detection
         self._pending_group = None       # dict: {group_id, group_name, member_ids: []}
         self._had_stickers = False       # track whether stickers were ever present (for auto-clear)
 
@@ -388,7 +389,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 self._process_texture_generation()
 
                 frame = self._render_frame(frame, face_data)
-                self._sync_state_to_ui()
+                self._sync_state_to_ui(face_data)
                 self._push_frame(frame)
         finally:
             self.detector.close()
@@ -784,28 +785,53 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
 
     # ── UI state sync ──
 
-    def _sync_state_to_ui(self):
+    def _face_data_changed(self, fc_x, fc_y, fw, threshold=5.0):
+        if self._last_face_fp is None:
+            return True
+        return (abs(fc_x - self._last_face_fp[0]) > threshold or
+                abs(fc_y - self._last_face_fp[1]) > threshold or
+                abs(fw - self._last_face_fp[2]) > threshold)
+
+    def _sync_state_to_ui(self, face_data=None):
         instances_info = []
         for s in self.active_stickers:
-            instances_info.append({
+            info = {
                 "instance_id": s["instance_id"],
                 "sticker_id": s["sticker_id"],
                 "region": s["location"],
-            })
+            }
+            adj = self.adjustments.get(s["instance_id"], {})
+            info["offset_x"] = adj.get("offset_x", 0.0)
+            info["offset_y"] = adj.get("offset_y", 0.0)
+            instances_info.append(info)
+
+        fc_x, fc_y, fw = 0.0, 0.0, 0.0
+        if face_data and face_data.get("landmark_rects"):
+            rects = face_data["landmark_rects"]
+            fh = rects.get("forehead_full")
+            if fh and len(fh) >= 4:
+                fc_x, fc_y = fh[0] + fh[2] / 2.0, fh[1] + fh[3] / 2.0
+                fw = max(fh[2], 1.0)
 
         fingerprint = (
             len(self.active_stickers),
-            tuple((i["instance_id"], i["sticker_id"], i["region"]) for i in instances_info),
+            tuple((i["instance_id"], i["sticker_id"], i["region"],
+                   round(i.get("offset_x", 0), 3), round(i.get("offset_y", 0), 3))
+                  for i in instances_info),
             self.edit_target_id,
         )
-        if fingerprint == self._last_synced_state:
+        if fingerprint == self._last_synced_state and not self._face_data_changed(fc_x, fc_y, fw):
             return
         self._last_synced_state = fingerprint
+        self._last_face_fp = (round(fc_x, 1), round(fc_y, 1), round(fw, 1))
 
         self.display_queue.put(DispActiveStickersChanged(
             active_count=len(self.active_stickers),
             instances=instances_info,
             edit_target_id=self.edit_target_id,
+            face_center_x=fc_x,
+            face_center_y=fc_y,
+            face_width=fw,
         ))
 
         if self.edit_target_id:

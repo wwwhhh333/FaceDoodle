@@ -1,9 +1,12 @@
+import os
+import sys
 import cv2
 import numpy as np
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QFormLayout, QGroupBox, QLabel, QLineEdit, QPushButton,
                              QShortcut, QMessageBox, QFileDialog, QDialog, QComboBox,
-                             QSlider, QCheckBox, QSpinBox, QDoubleSpinBox, QSplitter)
+                             QSlider, QCheckBox, QSpinBox, QDoubleSpinBox, QSplitter,
+                             QSizePolicy)
 from PyQt5.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 
@@ -111,6 +114,19 @@ class FaceDoodleWindow(QMainWindow):
         self._gallery_items = {}
         self._gallery_filter = "stickers"
         self._template_cards = {}
+        self._sticker_hit_zones = []  # [{instance_id, cx, cy, size}]
+        self._face_center_x = 0.0
+        self._face_center_y = 0.0
+        self._face_width = 0.0
+
+        self._region_offsets = {
+            "head_top": (0.0, -0.55), "forehead_top": (0.0, -0.35),
+            "forehead_full": (0.0, -0.25), "brows": (0.0, -0.12),
+            "eyes": (0.0, -0.02), "nose": (0.0, 0.12),
+            "mouth": (0.0, 0.28), "cheek_left": (-0.18, 0.05),
+            "cheek_right": (0.18, 0.05), "chin": (0.0, 0.42),
+            "jaw": (0.0, 0.45),
+        }
 
         self._face_draw_mode = False
         self._face_draw_region = "full_face"
@@ -159,6 +175,24 @@ class FaceDoodleWindow(QMainWindow):
 
         # ── 1. 顶栏 ──
         top_bar = GradientBar("FaceDoodle AI 贴纸工坊")
+
+        right_btns = QWidget()
+        right_btns.setStyleSheet("background: transparent; border: none;")
+        rb_layout = QHBoxLayout(right_btns)
+        rb_layout.setContentsMargins(0, 0, 0, 0)
+        rb_layout.setSpacing(6)
+
+        self.comfy_btn = QPushButton("ComfyUI")
+        self.comfy_btn.setFixedHeight(28)
+        self.comfy_btn.setCursor(Qt.PointingHandCursor)
+        self.comfy_btn.clicked.connect(self._on_comfy_toggle)
+        self._comfy_connected = False
+        self._comfy_check_timer = QTimer(self)
+        self._comfy_check_timer.timeout.connect(self._check_comfy_status)
+        self._comfy_check_timer.start(5000)
+        self._update_comfy_btn_style()
+        rb_layout.addWidget(self.comfy_btn)
+
         settings_btn = QPushButton("⚙")
         settings_btn.setFixedSize(36, 36)
         settings_btn.setCursor(Qt.PointingHandCursor)
@@ -170,7 +204,8 @@ class FaceDoodleWindow(QMainWindow):
             QPushButton:hover {{ background: {rgba(INK, 0.08)}; border-radius: {ROUNDED['full']}; }}
         """)
         settings_btn.clicked.connect(self._show_settings)
-        top_bar.add_right_widget(settings_btn)
+        rb_layout.addWidget(settings_btn)
+        top_bar.add_right_widget(right_btns)
         root.addWidget(top_bar)
 
         # ── 2. 中间区域: 左侧活动贴纸 + 视频 + 右侧贴纸库 ──
@@ -298,6 +333,7 @@ class FaceDoodleWindow(QMainWindow):
 
         # ── 3. 输入区 ──
         input_row = QWidget()
+        input_row.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         input_row.setStyleSheet(f"background: {CANVAS}; border-top: 1px solid {HAIRLINE};")
         input_layout = QHBoxLayout(input_row)
         input_layout.setContentsMargins(16, 12, 16, 12)
@@ -330,7 +366,9 @@ class FaceDoodleWindow(QMainWindow):
         self.send_btn.clicked.connect(self.send_command)
         input_layout.addWidget(self.send_btn)
 
-        root.addWidget(input_row)
+        # Insert input_row into v_splitter between video area and bottom panel
+        input_idx = v_splitter.indexOf(bottom_widget)
+        v_splitter.insertWidget(input_idx, input_row)
 
         # ── 4. 操作按钮区 ──
         action_row = QWidget()
@@ -402,7 +440,7 @@ class FaceDoodleWindow(QMainWindow):
         bottom_layout.addWidget(self.face_draw_toolbar)
 
         v_splitter.addWidget(bottom_widget)
-        v_splitter.setSizes([600, 80])
+        v_splitter.setSizes([600, 48, 80])
         root.addWidget(v_splitter, stretch=1)
 
         # ── 5. 状态栏（固定在底部，不随拖拽移动）──
@@ -941,6 +979,62 @@ class FaceDoodleWindow(QMainWindow):
     def _save_symmetry_to_disk(self, enabled):
         self._update_config_json(lambda cfg: cfg.setdefault("generation", {}).update(symmetry_enabled=enabled))
 
+    def _check_comfy_status(self):
+        if "--mock" in sys.argv:
+            self._comfy_connected = True
+            self._update_comfy_btn_style()
+            return
+        import socket
+        cfg = get_config()
+        addr = cfg["comfyui"]["server_address"]
+        host, _, port = addr.partition(":")
+        port = int(port) if port else 8188
+        try:
+            s = socket.create_connection((host, port), timeout=1)
+            s.close()
+            if not self._comfy_connected:
+                self._comfy_connected = True
+                self._update_comfy_btn_style()
+                self.send_btn.setEnabled(True)
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            if self._comfy_connected:
+                self._comfy_connected = False
+                self._update_comfy_btn_style()
+                self.send_btn.setEnabled(False)
+
+    def _on_comfy_toggle(self):
+        from app.ai.comfy_manager import ComfyUIManager
+        cfg = get_config()
+        addr = cfg["comfyui"]["server_address"]
+        install = cfg["comfyui"].get("install_path", "")
+        if self._comfy_connected:
+            return  # already connected, nothing to do
+        if install and os.path.exists(install):
+            mgr = ComfyUIManager(install_path=install, server_address=addr)
+            self.comfy_btn.setText("启动中...")
+            self.comfy_btn.setEnabled(False)
+            if mgr.start():
+                self._comfy_connected = True
+                self.send_btn.setEnabled(True)
+            self.comfy_btn.setEnabled(True)
+            self._update_comfy_btn_style()
+        else:
+            self._check_comfy_status()
+
+    def _update_comfy_btn_style(self):
+        if self._comfy_connected:
+            self.comfy_btn.setText("ComfyUI ✓")
+            self.comfy_btn.setStyleSheet(
+                f"QPushButton {{ color: #16a34a; background: rgba(22,163,74,0.1); border: 1px solid rgba(22,163,74,0.3); "
+                f"border-radius: {ROUNDED['sm']}; font-size: 11px; font-weight: 600; padding: 0 10px; }}"
+            )
+        else:
+            self.comfy_btn.setText("ComfyUI ✗")
+            self.comfy_btn.setStyleSheet(
+                f"QPushButton {{ color: #dc2626; background: rgba(220,38,38,0.1); border: 1px solid rgba(220,38,38,0.3); "
+                f"border-radius: {ROUNDED['sm']}; font-size: 11px; font-weight: 600; padding: 0 10px; }}"
+            )
+
     def _show_settings(self):
         cfg = get_config()
 
@@ -1085,6 +1179,24 @@ class FaceDoodleWindow(QMainWindow):
         instances = data.instances
         edit_target_id = data.edit_target_id
 
+        self._face_center_x = getattr(data, "face_center_x", 0.0)
+        self._face_center_y = getattr(data, "face_center_y", 0.0)
+        self._face_width = getattr(data, "face_width", 0.0)
+
+        self._sticker_hit_zones = []
+        if self._face_width > 0:
+            for inst in instances:
+                rx, ry = self._region_offsets.get(inst.get("region", ""), (0.0, 0.0))
+                ox = inst.get("offset_x", 0.0)
+                oy = inst.get("offset_y", 0.0)
+                cx = self._face_center_x + (rx + ox) * self._face_width
+                cy = self._face_center_y + (ry + oy) * self._face_width
+                self._sticker_hit_zones.append({
+                    "instance_id": inst["instance_id"],
+                    "cx": cx, "cy": cy,
+                    "size": self._face_width * 0.35,
+                })
+
         thumbs_info = {}
         templates = load_templates()
         for inst in instances:
@@ -1175,22 +1287,29 @@ class FaceDoodleWindow(QMainWindow):
         super().resizeEvent(event)
         self._position_indicator()
 
-    def _label_to_frame_delta(self, dx, dy):
+    def _label_to_frame_coord(self, label_pos):
         if self._frame_size is None:
+            return label_pos.x(), label_pos.y()
+        if self._label_scale <= 0:
+            return label_pos.x(), label_pos.y()
+        fx = (label_pos.x() - self._label_offset_x) / self._label_scale
+        fy = (label_pos.y() - self._label_offset_y) / self._label_scale
+        return fx, fy
+
+    def _label_to_frame_delta(self, dx, dy):
+        if self._label_scale <= 0:
             return dx, dy
-        fw, fh = self._frame_size
-        lw = self.video_label.width()
-        lh = self.video_label.height()
-        if lw <= 0 or lh <= 0:
-            return dx, dy
-        return dx * fw / lw, dy * fh / lh
+        return dx / self._label_scale, dy / self._label_scale
 
     # ── 鼠标事件 ──
 
     def eventFilter(self, obj, event):
         if obj is self.video_label:
+            t = event.type()
+            if t == QEvent.MouseButtonDblClick:
+                self._on_double_click(event)
+                return True
             if self._edit_mode:
-                t = event.type()
                 if t == QEvent.MouseButtonPress:
                     self._on_mouse_press(event)
                     return True
@@ -1203,11 +1322,7 @@ class FaceDoodleWindow(QMainWindow):
                 elif t == QEvent.Wheel:
                     self._on_wheel(event)
                     return True
-                elif t == QEvent.MouseButtonDblClick:
-                    self._on_double_click(event)
-                    return True
             elif self._face_draw_mode:
-                t = event.type()
                 if t == QEvent.TabletPress:
                     self._tablet_in_use = True
                     self._handle_draw_press(event.pos(), event.pressure())
@@ -1239,6 +1354,12 @@ class FaceDoodleWindow(QMainWindow):
         self._mouse_down = True
         self._mouse_button = event.button()
         self._last_mouse_pos = event.pos()
+        if event.button() == Qt.LeftButton:
+            fx, fy = self._label_to_frame_coord(event.pos())
+            target = self._find_sticker_at(fx, fy)
+            if target and target != self._edit_target_id:
+                self.gallery_queue.put(GalSelectEditTarget(instance_id=target))
+                self._mouse_down = False
 
     def _on_mouse_move(self, event):
         if not self._mouse_down or self._last_mouse_pos is None:
@@ -1262,8 +1383,27 @@ class FaceDoodleWindow(QMainWindow):
         factor = 1.0 + delta * 0.0005
         self.adjustment_queue.put(AdjScale(multiplier=factor))
 
+    def _find_sticker_at(self, frame_x, frame_y):
+        best = None
+        best_dist = float("inf")
+        for zone in self._sticker_hit_zones:
+            dx = frame_x - zone["cx"]
+            dy = frame_y - zone["cy"]
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist < zone["size"] and dist < best_dist:
+                best = zone["instance_id"]
+                best_dist = dist
+        return best
+
     def _on_double_click(self, event):
-        self.adjustment_queue.put(AdjReset())
+        self._mouse_down = False
+        self._last_mouse_pos = None
+        fx, fy = self._label_to_frame_coord(event.pos())
+        target = self._find_sticker_at(fx, fy)
+        if target:
+            if not self._edit_mode:
+                self._toggle_edit_mode()
+            self.gallery_queue.put(GalSelectEditTarget(instance_id=target))
 
     # ── 面部绘制模式 ──
 
