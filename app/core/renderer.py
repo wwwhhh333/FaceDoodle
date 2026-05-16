@@ -283,7 +283,7 @@ def render_scene(frame, face_landmarks, active_content, adjustment=None):
     if quad is None:
         return frame
 
-    quad = _apply_head_pose_skew(quad, face_landmarks)
+    quad = apply_head_pose_skew(quad, face_landmarks)
 
     # 手动调整：偏移/旋转/缩放
     if adjustment:
@@ -389,6 +389,17 @@ def render_face_mesh(frame, face_data):
 
 
 def apply_head_pose_skew(quad, face_landmarks):
+    """Apply head-pose deformation to a sticker quad.
+
+    Prefers the accurate solvePnP-based 3D projection when rvec/tvec/camera_matrix
+    are present in *face_landmarks*.  Falls back to a 2D yaw/pitch heuristic
+    otherwise (e.g. when solvePnP failed or the camera frame has poor lighting).
+    """
+    # Try the accurate 3D pose method first
+    if face_landmarks.get("rvec") is not None:
+        deformed = _deform_quad_by_pose(np.copy(quad), face_landmarks)
+        if not np.array_equal(quad, deformed):
+            return deformed
     return _apply_head_pose_skew(quad, face_landmarks)
 
 
@@ -427,7 +438,7 @@ def composite_stickers_to_merged(active_stickers, adjustments, face_data):
     if full_quad is None:
         log.warning("无法构建 full_face quad")
         return None, None, 1.0, 0.0, 0.0
-    full_quad = _apply_head_pose_skew(full_quad, face_data)
+    full_quad = apply_head_pose_skew(full_quad, face_data)
 
     dst_rect = np.array([
         [0, 0], [init_canvas_w - 1, 0],
@@ -452,7 +463,7 @@ def composite_stickers_to_merged(active_stickers, adjustments, face_data):
                               {"offset_x": 0.0, "offset_y": 0.0, "rotation": 0.0, "scale_mult": 1.0})
 
         try:
-            quad = _apply_head_pose_skew(quad, face_data)
+            quad = apply_head_pose_skew(quad, face_data)
             _apply_manual_adjustment(quad, adj, face_w)
 
             quad_h = np.hstack([quad, np.ones((4, 1), dtype=np.float32)])
