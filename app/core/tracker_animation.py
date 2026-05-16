@@ -67,6 +67,8 @@ class AnimationProcessor:
         adj["rotation"] -= anim["rotation"]
         if anim["scale_mult"] > 0.001:
             adj["scale_mult"] /= anim["scale_mult"]
+        else:
+            adj["scale_mult"] = 1.0
 
     def _adj_to_absolute(self, iid):
         adj = self.adjustments.get(iid)
@@ -155,12 +157,15 @@ class AnimationProcessor:
     def _run_export(self, clip, instance, face_data, fmt, fps, output_path):
         try:
             from app.core.animation.export import export_animation
+            instance_id = instance["instance_id"]
+            manual_adj = self.adjustments.get(instance_id)
             export_animation(
                 clip, instance["sticker"], fps, output_path, face_data,
                 instance["location"], instance["scale"],
                 progress_callback=lambda p: self.display_queue.put(
                     AnimExportProgress(progress=p, done=(p >= 1.0), output_path=output_path)),
                 format=fmt,
+                manual_adj=manual_adj,
             )
         except Exception as e:
             log.error("导出失败: %s", e)

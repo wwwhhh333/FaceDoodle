@@ -12,7 +12,8 @@ log = logging.getLogger(__name__)
 
 
 def export_animation(clip, sticker, fps, output_path, face_data,
-                     location, sticker_scale, progress_callback=None, format="mp4"):
+                     location, sticker_scale, progress_callback=None, format="mp4",
+                     manual_adj=None):
     """Render every frame of *clip* onto *face_data* and encode to video/gif.
 
     Args:
@@ -25,6 +26,7 @@ def export_animation(clip, sticker, fps, output_path, face_data,
         sticker_scale: base scale float
         progress_callback: callable(0.0..1.0)
         format: "mp4" or "gif"
+        manual_adj: optional per-instance manual adjustment dict
     """
     total_frames = max(1, int(clip.duration * fps))
     if total_frames < 1:
@@ -35,7 +37,17 @@ def export_animation(clip, sticker, fps, output_path, face_data,
 
     for i in range(total_frames):
         t = i / fps
-        adj = evaluate_clip(clip, t)
+        anim = evaluate_clip(clip, t)
+        if manual_adj:
+            adj = {
+                "offset_x": anim["offset_x"] + manual_adj.get("offset_x", 0.0),
+                "offset_y": anim["offset_y"] + manual_adj.get("offset_y", 0.0),
+                "rotation": anim["rotation"] + manual_adj.get("rotation", 0.0),
+                "scale_mult": anim["scale_mult"] * manual_adj.get("scale_mult", 1.0),
+                "opacity": anim.get("opacity", 1.0) * manual_adj.get("opacity", 1.0),
+            }
+        else:
+            adj = anim
         adj["edit_mode"] = False
 
         # Build a single-frame face canvas

@@ -217,6 +217,7 @@ class StickerManager:
             "offset_x": mrg_ox, "offset_y": mrg_oy,
             "rotation": 0.0, "scale_mult": 1.0,
         }
+        storage.save_sticker_adjustments(sid, self.adjustments[merged_instance_id])
         self.active_stickers.append({
             "instance_id": merged_instance_id,
             "sticker_id": sid,

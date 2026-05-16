@@ -182,7 +182,7 @@ def _build_location_quad(face_landmarks, location, sticker_shape, scale=1.0):
     )
 
 
-def _warp_sticker_onto_quad(frame, sticker, quad):
+def _warp_sticker_onto_quad(frame, sticker, quad, opacity=1.0):
     if sticker is None or sticker.shape[2] != 4:
         return frame
 
@@ -224,6 +224,8 @@ def _warp_sticker_onto_quad(frame, sticker, quad):
     )
 
     alpha = sticker_roi[:, :, 3:4].astype(np.float32) / 255.0
+    if opacity < 1.0:
+        alpha *= opacity
     if np.max(alpha) <= 0:
         return frame
 
@@ -232,6 +234,34 @@ def _warp_sticker_onto_quad(frame, sticker, quad):
     frame = frame.copy()
     frame[min_y:max_y, min_x:max_x] = np.clip(blended_roi, 0, 255).astype(np.uint8)
     return frame
+
+
+def _apply_manual_adjustment(quad, adjustment, face_w):
+    """Apply translate, rotate, scale from an adjustment dict onto *quad* in place.
+
+    Returns the modified quad for convenience.
+    """
+    ox = adjustment.get("offset_x", 0.0) * face_w
+    oy = adjustment.get("offset_y", 0.0) * face_w
+    quad += np.array([ox, oy], dtype=np.float32)
+
+    angle = adjustment.get("rotation", 0.0)
+    if abs(angle) > 0.01:
+        center = np.mean(quad, axis=0)
+        rad = np.radians(angle)
+        c, s = np.cos(rad), np.sin(rad)
+        for i in range(4):
+            dx = quad[i][0] - center[0]
+            dy = quad[i][1] - center[1]
+            quad[i][0] = center[0] + dx * c - dy * s
+            quad[i][1] = center[1] + dx * s + dy * c
+
+    sm = adjustment.get("scale_mult", 1.0)
+    if abs(sm - 1.0) > 0.001:
+        center = np.mean(quad, axis=0)
+        quad[:] = center + (quad - center) * sm
+
+    return quad
 
 
 def render_scene(frame, face_landmarks, active_content, adjustment=None):
@@ -258,28 +288,11 @@ def render_scene(frame, face_landmarks, active_content, adjustment=None):
     # 手动调整：偏移/旋转/缩放
     if adjustment:
         face_w = max(float(face_landmarks.get("face_width", 1.0)), 1.0)
-        ox = adjustment.get("offset_x", 0.0) * face_w
-        oy = adjustment.get("offset_y", 0.0) * face_w
-        quad = quad + np.array([ox, oy], dtype=np.float32)
-
-        angle = adjustment.get("rotation", 0.0)
-        if abs(angle) > 0.01:
-            center = np.mean(quad, axis=0)
-            rad = np.radians(angle)
-            c, s = np.cos(rad), np.sin(rad)
-            for i in range(4):
-                dx = quad[i][0] - center[0]
-                dy = quad[i][1] - center[1]
-                quad[i][0] = center[0] + dx * c - dy * s
-                quad[i][1] = center[1] + dx * s + dy * c
-
-        sm = adjustment.get("scale_mult", 1.0)
-        if abs(sm - 1.0) > 0.001:
-            center = np.mean(quad, axis=0)
-            quad = center + (quad - center) * sm
+        _apply_manual_adjustment(quad, adjustment, face_w)
 
     try:
-        frame = _warp_sticker_onto_quad(frame, sticker, quad)
+        opacity = adjustment.get("opacity", 1.0) if adjustment else 1.0
+        frame = _warp_sticker_onto_quad(frame, sticker, quad, opacity)
     except Exception as e:
         log.error("渲染出错: %s", e)
         return frame
@@ -440,26 +453,7 @@ def composite_stickers_to_merged(active_stickers, adjustments, face_data):
 
         try:
             quad = _apply_head_pose_skew(quad, face_data)
-
-            ox = adj.get("offset_x", 0.0) * face_w
-            oy = adj.get("offset_y", 0.0) * face_w
-            quad = quad + np.array([ox, oy], dtype=np.float32)
-
-            angle = adj.get("rotation", 0.0)
-            if abs(angle) > 0.01:
-                center = np.mean(quad, axis=0)
-                rad = np.radians(angle)
-                c, s = np.cos(rad), np.sin(rad)
-                for i in range(4):
-                    dx = quad[i][0] - center[0]
-                    dy = quad[i][1] - center[1]
-                    quad[i][0] = center[0] + dx * c - dy * s
-                    quad[i][1] = center[1] + dx * s + dy * c
-
-            sm = adj.get("scale_mult", 1.0)
-            if abs(sm - 1.0) > 0.001:
-                center = np.mean(quad, axis=0)
-                quad = center + (quad - center) * sm
+            _apply_manual_adjustment(quad, adj, face_w)
 
             quad_h = np.hstack([quad, np.ones((4, 1), dtype=np.float32)])
             canvas_pts = (frame_to_canvas @ quad_h.T).T

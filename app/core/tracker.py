@@ -581,19 +581,12 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         sticker_id = storage.save_sticker(
             new_content['sticker'], metadata,
         )
-        saved_adj = (self._sticker_adjustments.get(sticker_id)
-                     or storage.get_sticker_adjustments(sticker_id))
-        adj = dict(saved_adj) if saved_adj else {
-            "offset_x": 0.0, "offset_y": 0.0,
-            "rotation": 0.0, "scale_mult": 1.0,
-        }
         instance_id = self._add_sticker_instance(
             new_content['sticker'], sticker_id,
             new_content.get("location", "forehead"),
             new_content.get("scale", 1.0),
             new_content.get("prompt", ""),
         )
-        self.adjustments[instance_id] = adj
         self.edit_target_id = instance_id
         self.display_queue.put(DispStickerSaved(sticker_id=sticker_id))
         self.active_content = new_content  # backward compat
@@ -626,6 +619,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
     # ── adjustment queue ──
 
     def _process_adjustment_queue(self, face_w):
+        dirty = False
         while not self.adjustment_queue.empty():
             try:
                 msg = self.adjustment_queue.get(block=False)
@@ -642,16 +636,26 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             if isinstance(msg, AdjMove):
                 adj["offset_x"] += msg.dx / face_w
                 adj["offset_y"] += msg.dy / face_w
+                dirty = True
             elif isinstance(msg, AdjRotate):
                 adj["rotation"] += msg.d_angle
+                dirty = True
             elif isinstance(msg, AdjScale):
                 adj["scale_mult"] *= msg.multiplier
                 adj["scale_mult"] = max(0.05, adj["scale_mult"])
+                dirty = True
             elif isinstance(msg, AdjReset):
                 adj["offset_x"] = 0.0
                 adj["offset_y"] = 0.0
                 adj["rotation"] = 0.0
                 adj["scale_mult"] = 1.0
+                dirty = True
+
+        if dirty:
+            instance = next((s for s in self.active_stickers
+                             if s["instance_id"] == self.edit_target_id), None)
+            if instance:
+                storage.save_sticker_adjustments(instance["sticker_id"], adj)
 
     # ── gallery queue ──
 
@@ -769,6 +773,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                     adj["offset_y"] = anim["offset_y"] + manual["offset_y"]
                     adj["rotation"] = anim["rotation"] + manual["rotation"]
                     adj["scale_mult"] = anim["scale_mult"] * manual["scale_mult"]
+                    adj["opacity"] = anim.get("opacity", 1.0)
             adj["edit_mode"] = (iid == self.edit_target_id)
             if instance.get("is_animated"):
                 frame_idx, cols, rows = self.texture_animator.get_frame_params(iid)

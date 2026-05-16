@@ -161,7 +161,7 @@ def evaluate_clip(clip, t):
     return {
         "offset_x": _lerp(a.offset_x, b.offset_x, eased),
         "offset_y": _lerp(a.offset_y, b.offset_y, eased),
-        "rotation": _lerp(a.rotation, b.rotation, eased),
+        "rotation": _lerp_angle(a.rotation, b.rotation, eased),
         "scale_mult": _lerp(a.scale_mult, b.scale_mult, eased),
         "opacity": _lerp(a.opacity, b.opacity, eased),
     }
@@ -177,3 +177,11 @@ def _kf_to_adj(kf):
 
 def _lerp(a, b, t):
     return a + (b - a) * t
+
+
+def _lerp_angle(a, b, t):
+    """Shortest-arc linear interpolation for angles (degrees)."""
+    diff = (b - a) % 360
+    if diff > 180:
+        diff -= 360
+    return a + diff * t
