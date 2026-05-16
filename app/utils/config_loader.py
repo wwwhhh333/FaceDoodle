@@ -1,6 +1,10 @@
 import copy
 import json
+import logging
 import os
+import uuid
+
+log = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
     "comfyui": {
@@ -17,7 +21,7 @@ DEFAULT_CONFIG = {
         "loop": True
     },
     "queue": {
-        "frame_maxsize": 5,
+        "frame_maxsize": 15,
         "display_maxsize": 5,
         "command_maxsize": 5
     },
@@ -120,9 +124,9 @@ def _seed_from_example(config_path):
     import shutil
     try:
         shutil.copy(example_path, config_path)
-        print(f"[Config] 首次运行，已从 {example_path} 创建 {config_path}")
+        log.info("首次运行，已从 %s 创建 %s", example_path, config_path)
     except OSError as e:
-        print(f"[Config] 无法从 example 创建配置: {e}")
+        log.warning("无法从 example 创建配置: %s", e)
 
 
 def get_config():
@@ -141,7 +145,7 @@ def save_config(cfg=None, config_path="config.json"):
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         return True
     except (OSError, IOError) as e:
-        print(f"[Config] 保存失败: {e}")
+        log.error("保存配置失败: %s", e)
         return False
 
 
@@ -202,6 +206,79 @@ def build_positive_prompt(prompt_text):
     if gen.get("symmetry_enabled", False):
         prompt = _append_suffix(prompt, gen.get("symmetry_positive_suffix", "").strip())
     return prompt
+
+
+BUILTIN_PRESET_KEYS = frozenset({"pixel_art", "vector_art", "cartoon_style", "semi_realistic"})
+PRESET_FIELDS = ("name", "positive_prefix", "lora_name", "lora_strength_model", "lora_strength_clip")
+
+assert BUILTIN_PRESET_KEYS == DEFAULT_CONFIG["style"]["presets"].keys(), \
+    "BUILTIN_PRESET_KEYS must match DEFAULT_CONFIG style presets"
+
+
+def is_builtin_preset(key):
+    """True if key matches a built-in preset."""
+    return key in BUILTIN_PRESET_KEYS
+
+
+def _generate_preset_key():
+    """UUID-based key guaranteed not to collide with built-in keys."""
+    return "custom_" + uuid.uuid4().hex[:12]
+
+
+def add_preset(preset_data):
+    """Add a new style preset. Returns the generated key, or None on failure."""
+    key = _generate_preset_key()
+    get_config()
+    _config["style"].setdefault("presets", {})[key] = {
+        "name": preset_data.get("name", "New Preset"),
+        "positive_prefix": preset_data.get("positive_prefix", "art of {prompt}"),
+        "lora_name": preset_data.get("lora_name", ""),
+        "lora_strength_model": float(preset_data.get("lora_strength_model", 0.8)),
+        "lora_strength_clip": float(preset_data.get("lora_strength_clip", 0.8)),
+    }
+    if save_config():
+        return key
+    # Rollback on persistence failure
+    _config["style"]["presets"].pop(key, None)
+    return None
+
+
+def update_preset(key, preset_data):
+    """Update fields of an existing preset. Returns True on success."""
+    get_config()
+    presets = _config["style"].setdefault("presets", {})
+    if key not in presets:
+        return False
+    for field in PRESET_FIELDS:
+        if field in preset_data:
+            presets[key][field] = preset_data[field]
+    return save_config()
+
+
+def delete_preset(key):
+    """Delete a custom preset. Refuses built-in. Adjusts selected_preset if needed."""
+    if is_builtin_preset(key):
+        return False
+    get_config()
+    presets = _config["style"].setdefault("presets", {})
+    if key not in presets:
+        return False
+    del presets[key]
+    if _config["style"].get("selected_preset") == key:
+        remaining = [k for k in presets if is_builtin_preset(k)]
+        _config["style"]["selected_preset"] = remaining[0] if remaining else "pixel_art"
+    return save_config()
+
+
+def reset_preset(key):
+    """Restore a built-in preset to its DEFAULT_CONFIG values."""
+    if not is_builtin_preset(key):
+        return False
+    get_config()
+    _config["style"].setdefault("presets", {})[key] = copy.deepcopy(
+        DEFAULT_CONFIG["style"]["presets"][key]
+    )
+    return save_config()
 
 
 def build_negative_prompt(override=None):

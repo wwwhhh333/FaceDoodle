@@ -9,4 +9,5 @@ assets/gallery/
 assets/video/
 config.json
 api_key.txt
+logs/
 DESIGN.md

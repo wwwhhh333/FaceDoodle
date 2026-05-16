@@ -2,11 +2,14 @@
 
 
 import json
+import logging
 import time
 
 from openai import OpenAI
 
 from app.utils.config_loader import build_positive_prompt
+
+log = logging.getLogger(__name__)
 
 
 REGION_GROUPS = {
@@ -217,7 +220,7 @@ class FaceDoodleAgent:
         for region, keywords in KEYWORD_REGION_MAP.items():
             for kw in keywords:
                 if kw in user_input:
-                    print(f"[Agent] 关键词匹配: {kw} -> {region}")
+                    log.debug("关键词匹配: %s -> %s", kw, region)
                     return region, kw
         return None, None
 
@@ -226,7 +229,7 @@ class FaceDoodleAgent:
         if region is None:
             region = "eyes"
         display_region = REGION_DISPLAY.get(region, region)
-        print(f"[Agent] 使用{'关键词' if kw else '默认'} fallback: {region}")
+        log.info("使用%s fallback: %s", '关键词' if kw else '默认', region)
 
         if kw:
             messages = [
@@ -267,7 +270,7 @@ class FaceDoodleAgent:
                 last_error = e
                 if attempt < retries:
                     delay = 1.0 * (2 ** attempt)
-                    print(f"[Agent] API 调用失败 (尝试 {attempt + 1}/{retries + 1}): {e}，{delay}s 后重试")
+                    log.warning("API 调用失败 (尝试 %d/%d): %s，%.0fs 后重试", attempt + 1, retries + 1, e, delay)
                     time.sleep(delay)
         raise last_error
 
@@ -279,7 +282,7 @@ class FaceDoodleAgent:
         context = self._build_sticker_context(active_stickers or [])
 
         if not self.client:
-            print("[Agent] 未配置 API Key，使用关键词回退")
+            log.info("未配置 API Key，使用关键词回退")
             return self._build_fallback_result(user_message)
 
         try:
@@ -293,7 +296,7 @@ class FaceDoodleAgent:
             response = self._call_api(messages)
 
             raw_content = self._extract_content_text(response)
-            print(f"[Agent] LLM 原始响应 ({len(raw_content)} 字符): {raw_content[:200]}")
+            log.debug("LLM 原始响应 (%d 字符): %s", len(raw_content), raw_content[:200])
             data = self._parse_json_text(raw_content)
             action = data.get("action", "generate")
             message = data.get("message", "")
@@ -311,26 +314,28 @@ class FaceDoodleAgent:
                         message = f"帮你生成了一张贴纸，放在了{locations[0]}位置~"
                     else:
                         message = f"帮你生成了{len(tasks)}张贴纸，分别放在：{'、'.join(locations)}"
-                print(f"[Agent] 解析成功: action=generate, tasks={len(tasks)}")
-                return {
+                result = {
                     "action": "generate",
                     "message": message,
                     "tasks": tasks,
                     "workflow": "transparent_workflow_api.json",
                 }
+                if log.isEnabledFor(logging.INFO):
+                    log.info("解析完成:\n%s", json.dumps(result, ensure_ascii=False, indent=2))
+                return result
 
             elif action == "ask":
-                print(f"[Agent] 反问: {message}")
+                log.info("Agent 反问: %s", message)
                 if not message:
                     message = "不太确定你想要什么效果，能再具体描述一下吗？"
                 return {"action": "ask", "message": message}
 
             else:
-                print(f"[Agent] 未知 action '{action}'，降级为 generate")
+                log.warning("未知 action '%s'，降级为 generate", action)
                 return self._build_fallback_result(user_message)
 
         except Exception as e:
-            print(f"[Agent] API 调用失败，使用关键词回退: {e}")
+            log.warning("API 调用失败，使用关键词回退: %s", e)
             return self._build_fallback_result(user_message)
 
     # ── backward-compat wrapper ──

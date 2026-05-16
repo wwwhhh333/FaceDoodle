@@ -1,5 +1,6 @@
 """Animation queue processing and texture generation mixin for ConsumerProcessor."""
 
+import logging
 import threading
 
 from app.core.animation import (
@@ -11,6 +12,8 @@ from app.core.protocol import (
     AnimGenTexture, AnimClipUpdated, AnimExportProgress, AnimGenProgress,
 )
 from app.utils import storage
+
+log = logging.getLogger(__name__)
 
 
 class AnimationProcessor:
@@ -160,7 +163,7 @@ class AnimationProcessor:
                 format=fmt,
             )
         except Exception as e:
-            print(f"[Export] 导出失败: {e}")
+            log.error("导出失败: %s", e)
             self.display_queue.put(AnimExportProgress(progress=0.0, done=True, output_path=""))
 
     def _process_texture_generation(self):
@@ -222,7 +225,7 @@ class AnimationProcessor:
                 result_sticker_id=result_id,
             ))
         except Exception as e:
-            print(f"[TextureGen] 纹理动画生成失败: {e}")
+            log.error("纹理动画生成失败: %s", e)
             self.display_queue.put(AnimGenProgress(
                 sticker_id=msg.sticker_id, done=True,
                 error=str(e),

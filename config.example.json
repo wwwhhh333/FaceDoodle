@@ -9,7 +9,7 @@
     "height": 720
   },
   "queue": {
-    "frame_maxsize": 5,
+    "frame_maxsize": 15,
     "display_maxsize": 5,
     "command_maxsize": 5
   },

@@ -2,8 +2,7 @@
 
 
 import json
-
-from app.utils.config_loader import build_negative_prompt
+import logging
 import os
 import re
 import time
@@ -12,6 +11,11 @@ from urllib.parse import quote
 
 import requests
 
+from app.utils.config_loader import build_negative_prompt
+
+log = logging.getLogger(__name__)
+
+_ws_available = True  # cached availability of websockets package
 
 TEMP_MAX_FILES = 50
 
@@ -28,7 +32,7 @@ def cleanup_temp_files(output_dir="assets/temp", max_files=TEMP_MAX_FILES):
         files.sort(key=lambda x: x[0], reverse=True)
         for _, path in files[max_files:]:
             os.remove(path)
-        print(f"[ComfyClient] 清理临时文件: 保留 {max_files}/{len(files) + max_files} 个")
+        log.debug("清理临时文件: 保留 %d/%d 个", max_files, len(files))
     except FileNotFoundError:
         pass
 
@@ -97,7 +101,7 @@ class ComfyClient:
                 file_obj.write(response.content)
             return local_path
         except requests.RequestException as exc:
-            print(f"[ComfyClient] 下载生成图片失败: {exc}")
+            log.warning("下载生成图片失败: %s", exc)
             return None
 
     def _snapshot_temp_files(self):
@@ -156,40 +160,37 @@ class ComfyClient:
         return False
 
     def _iter_preferred_output_nodes(self, outputs, workflow):
-        def score(node_id):
-            node = workflow.get(str(node_id), {})
-            class_type = node.get("class_type", "")
-            uses_alpha = self._node_uses_alpha_output(str(node_id), workflow)
-
-            if class_type == "SaveImage" and uses_alpha:
-                return 0
-            if class_type == "SaveImage":
-                return 1
-            if class_type == "PreviewImage" and uses_alpha:
-                return 2
-            if uses_alpha:
-                return 3
-            return 4
-
-        ordered_ids = sorted(outputs.keys(), key=score)
+        ordered_ids = sorted(outputs.keys(), key=lambda nid: self._score_output_node(nid, workflow))
         for node_id in ordered_ids:
             yield node_id, outputs[node_id]
 
-    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None, input_image_path=None, seed=None):
-        """
-        同步生成逻辑：提交任务 -> 轮询状态 -> 返回结果路径
-        """
-        if timeout is None:
-            timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 120)
+    def _extract_image(self, image_info, prompt_id):
+        return (self._resolve_local_output_path(image_info)
+                or self._download_image(image_info, prompt_id))
 
-        # 加载工作流 JSON
-        workflow_path = os.path.join(os.getcwd(), "assets", "workflows", workflow_name)
+    def _score_output_node(self, node_id, workflow):
+        node = workflow.get(str(node_id), {})
+        ct = node.get("class_type", "")
+        uses_alpha = self._node_uses_alpha_output(str(node_id), workflow)
+        if ct == "SaveImage" and uses_alpha:
+            return 0
+        if ct == "SaveImage":
+            return 1
+        if ct == "PreviewImage" and uses_alpha:
+            return 2
+        if uses_alpha:
+            return 3
+        return 4
+
+    def _submit_workflow(self, prompt_text, workflow_name, negative_prompt=None,
+                          input_image_path=None, seed=None):
+        """Load workflow, inject prompt/LoRA/seed/image, submit to ComfyUI, return (workflow, prompt_id)."""
+        workflow_path = os.path.join(os.path.dirname(__file__), "workflows", workflow_name)
         with open(workflow_path, 'r', encoding='utf-8') as f:
             workflow = json.load(f)
 
-        # 注入提示词
+        # Inject prompt
         prompt_updated = False
-        negative_updated = False
         for node_id, node in workflow.items():
             title = node.get("_meta", {}).get("title", "")
             if title == "CLIP Text Encode (Prompt)":
@@ -198,29 +199,29 @@ class ComfyClient:
             elif title == "CLIP Text Encode (Negative)":
                 base_neg = negative_prompt or str(node.get("inputs", {}).get("text", "")).strip() or None
                 node["inputs"]["text"] = build_negative_prompt(override=base_neg)
-                negative_updated = True
 
         if not prompt_updated:
             raise ValueError("工作流中未找到可用的正向提示词节点")
 
-        # LoRA 名称覆盖
+        # LoRA
         lora_cfg = self._cfg.get("model", {}).get("lora", {})
         if lora_cfg:
             for node in workflow.values():
                 if node.get("class_type") == "LoraLoader":
                     if lora_cfg.get("name"):
                         node["inputs"]["lora_name"] = lora_cfg["name"]
-                        print(f"[ComfyClient] 使用 LoRA: {lora_cfg['name']}")
+                        log.debug("使用 LoRA: %s", lora_cfg['name'])
                     if lora_cfg.get("strength_model") is not None:
                         node["inputs"]["strength_model"] = lora_cfg["strength_model"]
                     if lora_cfg.get("strength_clip") is not None:
                         node["inputs"]["strength_clip"] = lora_cfg["strength_clip"]
-                    print(f"[ComfyClient] LoRA 强度: model={node['inputs'].get('strength_model')}, clip={node['inputs'].get('strength_clip')}")
+                    log.debug("LoRA 强度: model=%s, clip=%s",
+                              node['inputs'].get('strength_model'), node['inputs'].get('strength_clip'))
                     break
         else:
-            print("[ComfyClient] 未配置 LoRA，使用工作流默认值")
+            log.debug("未配置 LoRA，使用工作流默认值")
 
-        # Upload input image and inject into LoadImage node (img2img mode)
+        # Upload input image (img2img)
         if input_image_path and os.path.exists(input_image_path):
             uploaded_name = self._upload_image(input_image_path)
             if uploaded_name:
@@ -229,14 +230,14 @@ class ComfyClient:
                     if node.get("class_type") == "LoadImage":
                         node["inputs"]["image"] = uploaded_name
                         load_image_set = True
-                        print(f"[ComfyClient] img2img: 已上传并设置 LoadImage -> {uploaded_name}")
+                        log.debug("img2img: 已上传并设置 LoadImage -> %s", uploaded_name)
                         break
                 if not load_image_set:
-                    print("[ComfyClient] 警告: 工作流中未找到 LoadImage 节点，input_image_path 被忽略")
+                    log.warning("工作流中未找到 LoadImage 节点，input_image_path 被忽略")
             else:
-                print("[ComfyClient] 警告: 图片上传失败，将按 text-to-image 模式运行")
+                log.warning("图片上传失败，将按 text-to-image 模式运行")
 
-        # 根据 prompt 生成输出文件名
+        # Filename prefix
         slug_parts = [p.strip() for p in prompt_text.split(",") if p.strip()]
         short_prompt = "_".join(slug_parts[:2]) if len(slug_parts) >= 2 else slug_parts[0] if slug_parts else "sticker"
         slug = re.sub(r'[^\w]', '_', short_prompt.lower())
@@ -246,41 +247,33 @@ class ComfyClient:
                 node["inputs"]["filename_prefix"] = f"FaceDoodle/{slug}"
                 break
 
-        sampler_node = None
+        # Seed
         for nid, node in workflow.items():
             if node.get("class_type") == "KSampler":
-                sampler_node = node
+                if seed is not None:
+                    node.setdefault("inputs", {})["seed"] = seed
+                else:
+                    node.setdefault("inputs", {})["seed"] = uuid.uuid4().int & ((1 << 63) - 1)
                 break
-        if sampler_node:
-            if seed is not None:
-                sampler_node.setdefault("inputs", {})["seed"] = seed
-            else:
-                sampler_node.setdefault("inputs", {})["seed"] = uuid.uuid4().int & ((1 << 63) - 1)
 
-        previous_temp_files = self._snapshot_temp_files()
-
-        # 提交任务给 ComfyUI
+        # Submit
         p = {"prompt": workflow}
         try:
             http_res = requests.post(
                 f"http://{self.server_address}/prompt",
-                json=p,
-                timeout=30,
+                json=p, timeout=30,
             )
         except requests.RequestException as e:
             raise RuntimeError(
-                f"无法连接 ComfyUI ({self.server_address})，请确认 ComfyUI 已启动。"
-                f"\n  原始错误: {e}"
+                f"无法连接 ComfyUI ({self.server_address})，请确认 ComfyUI 已启动。\n  原始错误: {e}"
             )
 
         if http_res.status_code != 200:
             raise RuntimeError(
-                f"ComfyUI 返回 HTTP {http_res.status_code}。"
-                f"\n  响应内容: {http_res.text[:500]}"
+                f"ComfyUI 返回 HTTP {http_res.status_code}。\n  响应内容: {http_res.text[:500]}"
             )
 
         res = http_res.json()
-
         if "prompt_id" not in res:
             error_msg = res.get("error", {})
             if error_msg:
@@ -295,7 +288,160 @@ class ComfyClient:
                 f"ComfyUI 返回了异常的响应: {json.dumps(res, ensure_ascii=False)[:500]}"
             )
 
-        prompt_id = res['prompt_id']
+        return workflow, res['prompt_id']
+
+    def generate_sync_ws(self, prompt_text, workflow_name, negative_prompt=None,
+                          timeout=None, input_image_path=None, seed=None,
+                          progress_callback=None):
+        """WebSocket-based generation with real-time step progress.
+
+        Falls back to polling ``generate_sync()`` when the ``websockets``
+        package is unavailable.
+        """
+        global _ws_available
+        if _ws_available:
+            try:
+                from websockets.sync.client import connect as ws_connect
+            except ImportError:
+                _ws_available = False
+                log.warning("websockets 未安装，回退到轮询模式")
+
+        if not _ws_available:
+            log.debug("回退到轮询模式")
+            return self.generate_sync(prompt_text, workflow_name,
+                                       negative_prompt=negative_prompt,
+                                       timeout=timeout,
+                                       input_image_path=input_image_path,
+                                       seed=seed)
+
+        if timeout is None:
+            timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 120)
+
+        ws_url = f"ws://{self.server_address}/ws?clientId={uuid.uuid4().hex}"
+        result_path = None
+        result_score = 99
+        start_time = time.time()
+
+        try:
+            ws = ws_connect(ws_url, timeout=timeout)
+        except Exception as e:
+            log.warning("WebSocket 连接失败，回退到轮询: %s", e)
+            return self.generate_sync(prompt_text, workflow_name,
+                                       negative_prompt=negative_prompt,
+                                       timeout=timeout,
+                                       input_image_path=input_image_path,
+                                       seed=seed)
+
+        # Submit prompt AFTER WS connects, so no execution events are missed
+        try:
+            workflow, prompt_id = self._submit_workflow(
+                prompt_text, workflow_name,
+                negative_prompt=negative_prompt,
+                input_image_path=input_image_path,
+                seed=seed,
+            )
+        except Exception as e:
+            ws.close()
+            _ws_available = False
+            log.warning("WebSocket 提交失败，回退到轮询: %s", e)
+            return self.generate_sync(prompt_text, workflow_name,
+                                       negative_prompt=negative_prompt,
+                                       timeout=timeout,
+                                       input_image_path=input_image_path,
+                                       seed=seed)
+
+        previous_temp_files = self._snapshot_temp_files()
+
+        try:
+            ws.socket.settimeout(timeout)
+            while time.time() - start_time < timeout:
+                try:
+                    message = json.loads(ws.recv())
+                except TimeoutError:
+                    continue
+                msg_type = message.get("type")
+                data = message.get("data", {})
+
+                if data.get("prompt_id") != prompt_id:
+                    continue
+
+                if msg_type == "progress" and progress_callback:
+                    progress_callback(data.get("value", 0), data.get("max", 1))
+
+                elif msg_type == "executed":
+                    node_id = data.get("node", "")
+                    node_output = data.get("output", {})
+                    if "images" in node_output:
+                        score = self._score_output_node(node_id, workflow)
+                        for image_info in node_output["images"]:
+                            path = self._extract_image(image_info, prompt_id)
+                            if path and score < result_score:
+                                result_path = path
+                                result_score = score
+                                break
+
+                elif msg_type == "execution_cached":
+                    nodes = data.get("nodes", [])
+                    if nodes:
+                        log.debug("ComfyUI 缓存命中: %d 个节点", len(nodes))
+
+                elif msg_type == "executing":
+                    if data.get("node") is None:
+                        break  # prompt complete (node=None = all done)
+                elif msg_type in ("execution_success", "execution_complete"):
+                    break
+
+                elif msg_type == "execution_error":
+                    raise RuntimeError(
+                        f"ComfyUI 执行错误: {data.get('node_id')} "
+                        f"-- {data.get('exception_message', '')}"
+                    )
+
+        except Exception as e:
+            _ws_available = False
+            log.warning("WebSocket 异常，回退到轮询: %s", e)
+            return self.generate_sync(prompt_text, workflow_name,
+                                       negative_prompt=negative_prompt,
+                                       timeout=timeout,
+                                       input_image_path=input_image_path,
+                                       seed=seed)
+        finally:
+            ws.close()
+
+        if not result_path:
+            log.info("WebSocket 完成，但未捕获到结果，尝试本地文件和回退...")
+            fallback = self._find_new_temp_file(previous_temp_files)
+            if fallback:
+                log.info("WebSocket 未捕获结果，使用本地缓存文件: %s", fallback)
+                return fallback
+            log.info("WebSocket 未捕获结果，回退轮询")
+            return self.generate_sync(prompt_text, workflow_name,
+                                       negative_prompt=negative_prompt,
+                                       timeout=max(5, timeout - (time.time() - start_time)),
+                                       input_image_path=input_image_path,
+                                       seed=seed)
+
+        if result_path:
+            log.info("WebSocket 成功捕获结果: %s", result_path)
+        else:
+            log.info("WebSocket 完成，未获取到结果")
+        return result_path
+
+    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None, input_image_path=None, seed=None):
+        """
+        同步生成逻辑：提交任务 -> 轮询状态 -> 返回结果路径
+        """
+        if timeout is None:
+            timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 120)
+
+        workflow, prompt_id = self._submit_workflow(
+            prompt_text, workflow_name,
+            negative_prompt=negative_prompt,
+            input_image_path=input_image_path,
+            seed=seed,
+        )
+
+        previous_temp_files = self._snapshot_temp_files()
 
         # 轮询历史记录，等待任务完成
         start_time = time.time()
@@ -306,23 +452,18 @@ class ComfyClient:
             ).json()
 
             if prompt_id in history_res:
-                # 任务完成，提取文件名
                 outputs = history_res[prompt_id]['outputs']
                 for node_id, output_node in self._iter_preferred_output_nodes(outputs, workflow):
                     if 'images' in output_node:
                         for image_info in output_node['images']:
-                            local_path = self._resolve_local_output_path(image_info)
-                            if local_path and os.path.exists(local_path):
-                                return local_path
-
-                            downloaded_path = self._download_image(image_info, prompt_id)
-                            if downloaded_path and os.path.exists(downloaded_path):
-                                return downloaded_path
+                            path = self._extract_image(image_info, prompt_id)
+                            if path:
+                                return path
 
                 if history_res[prompt_id].get("status", {}).get("completed"):
                     fallback_file = self._find_new_temp_file(previous_temp_files)
                     if fallback_file:
-                        print(f"[ComfyClient] 使用本地缓存文件兜底: {fallback_file}")
+                        log.info("使用本地缓存文件兜底: %s", fallback_file)
                         return fallback_file
 
             time.sleep(0.5)
@@ -339,7 +480,7 @@ class ComfyClient:
         if timeout is None:
             timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 300)
 
-        workflow_path = os.path.join(os.getcwd(), "assets", "workflows", workflow_name)
+        workflow_path = os.path.join(os.path.dirname(__file__), "workflows", workflow_name)
         with open(workflow_path, 'r', encoding='utf-8') as f:
             workflow = json.load(f)
 
@@ -425,10 +566,9 @@ class ComfyClient:
                 for node_id, output_node in self._iter_preferred_output_nodes(outputs, workflow):
                     if "images" in output_node:
                         for image_info in output_node["images"]:
-                            local = (self._resolve_local_output_path(image_info)
-                                     or self._download_image(image_info, prompt_id))
-                            if local and os.path.exists(local):
-                                all_frames.append(local)
+                            path = self._extract_image(image_info, prompt_id)
+                            if path:
+                                all_frames.append(path)
 
                 if all_frames:
                     all_frames.sort(key=lambda p: (

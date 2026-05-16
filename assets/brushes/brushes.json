@@ -21,7 +21,7 @@
     {
       "id": "star_scatter",
       "name": "星",
-      "tip": "星.png",
+      "tip": "star.png",
       "spacing": 1,
       "pressure_size": true,
       "pressure_opacity": true,

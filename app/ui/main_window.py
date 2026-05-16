@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import cv2
@@ -6,7 +7,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QFormLayout, QGroupBox, QLabel, QLineEdit, QPushButton,
                              QShortcut, QMessageBox, QFileDialog, QDialog, QComboBox,
                              QSlider, QCheckBox, QSpinBox, QDoubleSpinBox, QSplitter,
-                             QSizePolicy)
+                             QSizePolicy, QProgressBar)
 from PyQt5.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
 
@@ -37,6 +38,8 @@ from app.core.protocol import (
     AnimExportProgress, AnimClipUpdated, AnimPlaybackState,
     AnimGenTexture, AnimGenProgress,
 )
+
+log = logging.getLogger(__name__)
 
 
 class VideoUpdateThread(QThread):
@@ -352,6 +355,18 @@ class FaceDoodleWindow(QMainWindow):
         self.style_combo.currentIndexChanged.connect(self._on_style_changed)
         input_layout.addWidget(self.style_combo)
 
+        self.manage_presets_btn = QPushButton("管理")
+        self.manage_presets_btn.setFixedHeight(28)
+        self.manage_presets_btn.setCursor(Qt.PointingHandCursor)
+        self.manage_presets_btn.setStyleSheet(
+            f"QPushButton {{ color: {INK_MUTED_80}; background: {PARCHMENT}; "
+            f"border: 1px solid {HAIRLINE}; border-radius: 5px; "
+            f"padding: 2px 10px; {font_css('caption')} }}"
+            f"QPushButton:hover {{ background: {PRIMARY}; color: #fff; border-color: {PRIMARY}; }}"
+        )
+        self.manage_presets_btn.clicked.connect(self._on_manage_presets)
+        input_layout.addWidget(self.manage_presets_btn)
+
         self.symmetry_check = QCheckBox("对称模式")
         self.symmetry_check.setToolTip("启用后在提示词中添加对称性关键词")
         self.symmetry_check.setCursor(Qt.PointingHandCursor)
@@ -444,12 +459,31 @@ class FaceDoodleWindow(QMainWindow):
         root.addWidget(v_splitter, stretch=1)
 
         # ── 5. 状态栏（固定在底部，不随拖拽移动）──
+        status_container = QWidget()
+        status_layout = QVBoxLayout(status_container)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(0)
+
+        self._gen_progress_bar = QProgressBar()
+        self._gen_progress_bar.setRange(0, 100)
+        self._gen_progress_bar.setValue(0)
+        self._gen_progress_bar.setFixedHeight(4)
+        self._gen_progress_bar.setTextVisible(False)
+        self._gen_progress_bar.hide()
+        self._gen_progress_bar.setStyleSheet(
+            f"QProgressBar {{ background: {HAIRLINE}; border: none; border-radius: 2px; }}"
+            f"QProgressBar::chunk {{ background: {PRIMARY}; border-radius: 2px; }}"
+        )
+        status_layout.addWidget(self._gen_progress_bar)
+
         self.status_label = QLabel("Ctrl+E 编辑 | Ctrl+D 面部绘制 | 左键移动 右键旋转 滚轮缩放 双击重置")
         self.status_label.setStyleSheet(
             f"color: {INK_MUTED_48}; {font_css('fine-print')} padding: 5px; background: {CANVAS}; border-top: 1px solid {HAIRLINE};"
         )
         self.status_label.setAlignment(Qt.AlignCenter)
-        root.addWidget(self.status_label)
+        status_layout.addWidget(self.status_label)
+
+        root.addWidget(status_container)
 
         # 快捷键
         self.edit_shortcut = QShortcut(QKeySequence("Ctrl+E"), self)
@@ -783,11 +817,23 @@ class FaceDoodleWindow(QMainWindow):
 
     def _on_gen_progress(self, msg):
         if msg.done:
+            self._gen_progress_bar.setValue(100)
+            self._gen_progress_bar.hide()
             self.chat_panel.add_agent_message(msg.message, "done")
             self._load_gallery()
             self._reenable_input()
         else:
             self.status_label.setText(msg.message)
+            if msg.total > 0 and msg.total_steps > 0:
+                task_progress = (msg.current - 1) / msg.total
+                step_progress = msg.step / msg.total_steps / msg.total
+                overall = int((task_progress + step_progress) * 100)
+            elif msg.total > 0:
+                overall = int(msg.current / msg.total * 100)
+            else:
+                overall = 0
+            self._gen_progress_bar.setValue(overall)
+            self._gen_progress_bar.show()
 
     def _on_agent_message(self, text):
         self.chat_panel.add_agent_message(text, "done")
@@ -909,7 +955,7 @@ class FaceDoodleWindow(QMainWindow):
         self.style_combo.clear()
         items = get_style_preset_items()
         cfg = get_config()
-        selected_key = cfg.get("style", {}).get("selected_preset", "flat_vector")
+        selected_key = cfg.get("style", {}).get("selected_preset", "pixel_art")
         selected_idx = 0
         for idx, (key, name) in enumerate(items):
             self.style_combo.addItem(name, key)
@@ -953,7 +999,7 @@ class FaceDoodleWindow(QMainWindow):
             update_fn(disk_cfg)
             save_config(disk_cfg)
         except Exception as e:
-            print(f"[UI] 保存 config.json 失败: {e}")
+            log.error("保存 config.json 失败: %s", e)
 
     def _save_style_and_lora_to_disk(self, preset_key):
         def _update(cfg):
@@ -969,6 +1015,17 @@ class FaceDoodleWindow(QMainWindow):
                     lora["strength_model"] = 0.0
                     lora["strength_clip"] = 0.0
         self._update_config_json(_update)
+
+    def _on_manage_presets(self):
+        from app.ui.style_preset_manager_dialog import StylePresetManagerDialog
+        dlg = StylePresetManagerDialog(self)
+        dlg.exec_()
+        # Re-populate combo to reflect add/delete/rename changes
+        self._populate_style_combo()
+        # Re-apply LoRA for the (possibly different) current selection
+        idx = self.style_combo.currentIndex()
+        if idx >= 0:
+            self._on_style_changed(idx)
 
     def _on_symmetry_toggled(self, state):
         enabled = state == Qt.Checked
@@ -1250,9 +1307,9 @@ class FaceDoodleWindow(QMainWindow):
     def _on_anim_export_progress(self, msg):
         if msg.done:
             if msg.output_path:
-                print(f"[UI] 导出完成: {msg.output_path}")
+                log.info("导出完成: %s", msg.output_path)
             else:
-                print("[UI] 导出失败")
+                log.error("导出失败")
 
     def _on_ai_animate(self):
         if len(self._gallery_selected_ids) != 1:

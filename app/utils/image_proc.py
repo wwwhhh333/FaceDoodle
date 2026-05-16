@@ -1,9 +1,12 @@
 # 图像平滑 格式转换 等
 
+import logging
 import os
 
 import cv2
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 
 def load_rgba_sticker(filepath):
@@ -12,14 +15,14 @@ def load_rgba_sticker(filepath):
     返回带有 4 个通道的 BGRA 图像
     """
     if not os.path.exists(filepath):
-        print(f"Error: 找不到贴纸文件 {filepath}")
+        log.error("找不到贴纸文件 %s", filepath)
         return None
 
     raw = np.fromfile(filepath, dtype=np.uint8)
     sticker = cv2.imdecode(raw, cv2.IMREAD_UNCHANGED)
 
     if sticker is None:
-        print(f"Warning: 无法读取贴纸文件 {filepath}")
+        log.warning("无法读取贴纸文件 %s", filepath)
         return None
 
     if len(sticker.shape) == 2:
@@ -42,10 +45,10 @@ def load_rgba_sticker(filepath):
         bgra[:, :, 3] = alpha
 
         if np.max(alpha) == 0:
-            print(f"Warning: {filepath} 背景抠图失败，图片可能几乎全白。")
+            log.warning("%s 背景抠图失败，图片可能几乎全白。", filepath)
             return None
 
         return bgra
 
-    print(f"Warning: {filepath} 不是支持的贴纸图像格式。")
+    log.warning("%s 不是支持的贴纸图像格式。", filepath)
     return None

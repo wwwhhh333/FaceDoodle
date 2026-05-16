@@ -1,4 +1,5 @@
 import glob
+import logging
 import os
 import uuid
 import cv2
@@ -32,6 +33,8 @@ from app.utils.image_proc import load_rgba_sticker
 from app.utils import storage
 from app.core.tracker_stickers import StickerManager
 from app.core.tracker_animation import AnimationProcessor
+
+log = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -98,10 +101,10 @@ def _handle_img2img(cmd, result_queue, mock, gen_state):
                 cv2.imwrite(preprocessed_path, canvas)
                 image_path = preprocessed_path
 
-        print(f"[AI Worker] img2img 模式: prompt='{prompt_text}', image='{image_path}'")
+        log.debug("img2img 模式: prompt='%s', image='%s'", prompt_text, image_path)
 
         if mock:
-            mock_path = "assets/static/loading.png"
+            mock_path = "assets/ui/loading.png"
             temp_files = glob.glob("assets/temp/*.png")
             if temp_files:
                 temp_files.sort(key=os.path.getmtime, reverse=True)
@@ -118,7 +121,7 @@ def _handle_img2img(cmd, result_queue, mock, gen_state):
                 new_sticker = load_rgba_sticker(generated_path)
             else:
                 new_sticker = None
-                print("[AI Worker] img2img 错误：ComfyUI 未生成有效文件")
+                log.error("img2img 错误：ComfyUI 未生成有效文件")
 
         if new_sticker is not None:
             result_data = {
@@ -130,12 +133,12 @@ def _handle_img2img(cmd, result_queue, mock, gen_state):
                 "timestamp": time.time()
             }
             result_queue.put(result_data)
-            print(f"[AI Worker] img2img 任务完成, 位置: {target_location}")
+            log.info("img2img 任务完成, 位置: %s", target_location)
         else:
             result_queue.put({"error": "ComfyUI 未能生成有效图片，请检查服务是否正常运行"})
 
     except Exception as e:
-        print(f"[AI Worker] img2img 异常: {str(e)}")
+        log.error("img2img 异常: %s", e)
         result_queue.put({"error": str(e)})
     finally:
         gen_state.finish()
@@ -150,7 +153,7 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
     agent = FaceDoodleAgent(api_key=api_key)
 
     try:
-        print(f"[AI Worker] 正在处理: {user_command}")
+        log.info("正在处理: %s", user_command)
         chat_result = agent.chat(
             str(user_command),
             conversation_history=conversation_history,
@@ -162,7 +165,7 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
         if action == "generate":
             tasks = chat_result.get("tasks", [])
             workflow = chat_result.get("workflow", "transparent_workflow_api.json")
-            print(f"[AI Worker] 生成任务: {len(tasks)} 个贴纸")
+            log.info("生成任务: %d 个贴纸", len(tasks))
 
             group_id = None
             group_name = None
@@ -180,25 +183,27 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
                 })
 
                 if mock:
-                    mock_path = "assets/static/loading.png"
+                    mock_path = "assets/ui/loading.png"
                     temp_files = glob.glob("assets/temp/*.png")
                     if temp_files:
                         temp_files.sort(key=os.path.getmtime, reverse=True)
                         mock_path = temp_files[0]
-                    print(f"[AI Worker] Mock 模式: 使用 {mock_path}")
+                    log.debug("Mock 模式: 使用 %s", mock_path)
                     new_sticker = load_rgba_sticker(mock_path)
                 else:
                     comfy_client = ComfyClient()
-                    print(f"[AI Worker] 生成提示词: {task['prompt']}")
+                    log.debug("生成提示词: %s", task['prompt'])
                     image_path = comfy_client.generate_sync(
                         prompt_text=task["prompt"],
                         workflow_name=workflow,
                     )
+                    log.info("生成完成，返回路径: %s", image_path or "None")
                     if image_path and os.path.exists(image_path):
                         new_sticker = load_rgba_sticker(image_path)
+                        log.info("贴纸加载: %s", "成功" if new_sticker is not None else "失败")
                     else:
                         new_sticker = None
-                        print("[AI Worker] 错误：ComfyUI 未生成有效文件")
+                        log.error("错误：ComfyUI 未生成有效文件")
 
                 if new_sticker is not None:
                     result_data = {
@@ -236,11 +241,11 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
             })
 
         else:
-            print(f"[AI Worker] 未知 action: {action}")
+            log.warning("未知 action: %s", action)
             result_queue.put({"type": Result.ERROR, "error": f"未知操作: {action}"})
 
     except Exception as e:
-        print(f"[AI Worker] 异常: {e}")
+        log.error("AI Worker 异常: %s", e)
         result_queue.put({"type": Result.ERROR, "error": str(e)})
 
     finally:
@@ -252,13 +257,15 @@ def ai_worker_thread(user_command, result_queue, api_key, mock, gen_state,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def producer(frame_queue, stop_event, video_path=None):
+    from app.utils.logging_config import setup_logging
+    setup_logging()
     from app.utils.config_loader import get_config
     cfg = get_config()
 
     if video_path:
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            print(f"[Producer] 错误：无法打开视频文件 {video_path}")
+            log.error("无法打开视频文件 %s", video_path)
             stop_event.set()
             return
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -266,13 +273,13 @@ def producer(frame_queue, stop_event, video_path=None):
         frame_delay = 1.0 / fps
         loop = cfg["video"]["loop"]
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        print(f"[Producer] 视频模式: {os.path.basename(video_path)} ({fps:.1f} FPS, "
-              f"{total_frames} 帧, {'循环' if loop else '单次'})")
+        log.info("视频模式: %s (%.1f FPS, %d 帧, %s)",
+                 os.path.basename(video_path), fps, total_frames, '循环' if loop else '单次')
     else:
         cam_cfg = cfg.get("camera", {})
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
-            print("[Producer] 错误：无法打开摄像头 (index 0)")
+            log.error("无法打开摄像头 (index 0)")
             stop_event.set()
             return
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam_cfg.get("width", 1280))
@@ -294,7 +301,7 @@ def producer(frame_queue, stop_event, video_path=None):
             try:
                 frame_queue.put(frame, timeout=0.1)
             except Exception:
-                print("[Producer] 警告：frame_queue 已满或消费者已退出，丢弃一帧")
+                log.debug("frame_queue 已满，丢弃一帧")
                 pass
             if frame_delay > 0:
                 elapsed = time.perf_counter() - _frame_start
@@ -303,7 +310,7 @@ def producer(frame_queue, stop_event, video_path=None):
                     time.sleep(remaining)
     finally:
         cap.release()
-        print("[Producer] 已退出")
+        log.info("Producer 已退出")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -393,7 +400,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 self._push_frame(frame)
         finally:
             self.detector.close()
-            print("[Consumer] 已退出")
+            log.info("Consumer 已退出")
 
     # ── initialization ──
 
@@ -415,7 +422,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                     "offset_x": 0.0, "offset_y": 0.0,
                     "rotation": 0.0, "scale_mult": 1.0,
                 }
-                print(f"[Consumer] Mock 模式: 已加载 {temp_files[0]}")
+                log.info("Mock 模式: 已加载 %s", temp_files[0])
 
     # ── frame i/o ──
 
@@ -493,6 +500,8 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             self.display_queue.put(DispGenProgress(
                 current=new_content.get("current", 0),
                 total=new_content.get("total", 0),
+                step=new_content.get("step", 0),
+                total_steps=new_content.get("total_steps", 0),
                 message=new_content.get("message", ""),
             ))
             return
@@ -506,10 +515,10 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                     member_ids=self._pending_group["member_ids"],
                     group_id=self._pending_group["group_id"],
                 )
-                print(f"[Consumer] 贴纸组已保存: {self._pending_group['group_name']} ({len(self._pending_group['member_ids'])} 成员)")
+                log.info("贴纸组已保存: %s (%d 成员)", self._pending_group['group_name'], len(self._pending_group['member_ids']))
             self._pending_group = None
             self.display_queue.put(DispGenProgress(done=True, message=new_content.get("assistant_message", "生成完成")))
-            print(f"[Conversation] 生成完成, 历史: {len(self.conversation_history)} 条")
+            log.debug("生成完成, 历史: %d 条", len(self.conversation_history))
             return
 
         # ── agent question ──
@@ -518,13 +527,13 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             self.display_queue.put(DispAgentQuestion(
                 text=new_content.get("message", ""),
             ))
-            print(f"[Conversation] Agent 反问, 历史: {len(self.conversation_history)} 条")
+            log.debug("Agent 反问, 历史: %d 条", len(self.conversation_history))
             return
 
         # ── generation result (single sticker) ──
         if msg_type == Result.GENERATION_RESULT:
             if "error" in new_content:
-                print(f"[Consumer] 贴纸生成失败: {new_content['error']}")
+                log.error("贴纸生成失败: %s", new_content['error'])
                 self.display_queue.put(DispGenerationFailed(error=new_content['error']))
                 return
             try:
@@ -537,7 +546,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                         sticker_id,
                     )
             except Exception as e:
-                print(f"[Consumer] 保存贴纸失败: {e}")
+                log.error("保存贴纸失败: %s", e)
             return
 
         # ── old-format success (backward compat, no type field) ──
@@ -546,7 +555,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 if self._save_generated_sticker(new_content) is not None:
                     self.display_queue.put(DispGenProgress(done=True, message="生成完成"))
             except Exception as e:
-                print(f"[Consumer] 保存贴纸失败: {e}")
+                log.error("保存贴纸失败: %s", e)
             return
 
     # ── sticker persistence helper ──
@@ -557,7 +566,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         Returns sticker_id on success, None if at capacity.
         """
         if len(self.active_stickers) >= self.MAX_STICKERS:
-            print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，跳过添加")
+            log.warning("贴纸数量已达上限 (%d)，跳过添加", self.MAX_STICKERS)
             return None
 
         metadata = {
@@ -588,7 +597,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self.edit_target_id = instance_id
         self.display_queue.put(DispStickerSaved(sticker_id=sticker_id))
         self.active_content = new_content  # backward compat
-        print(f"[Consumer] 贴纸已保存: {sticker_id}")
+        log.info("贴纸已保存: %s", sticker_id)
         return sticker_id
 
     def _accumulate_group_member(self, group_id, group_name, sticker_id):
@@ -851,6 +860,8 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
 
 def consumer(in_queue, display_queue, command_queue, adjustment_queue,
              gallery_queue, draw_queue, animation_queue, api_key, stop_event, mock=False):
+    from app.utils.logging_config import setup_logging
+    setup_logging()
     processor = ConsumerProcessor(
         in_queue, display_queue, command_queue, adjustment_queue,
         gallery_queue, draw_queue, animation_queue, api_key, stop_event, mock,

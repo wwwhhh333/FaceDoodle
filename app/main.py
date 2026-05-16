@@ -9,6 +9,10 @@ from app.core.tracker import producer, consumer
 from app.ui.main_window import FaceDoodleWindow
 from app.utils.config_loader import load_config, is_first_run
 from app.utils.storage import load_preferences
+from app.utils.logging_config import setup_logging
+
+import logging
+log = logging.getLogger(__name__)
 
 MOCK_MODE = "--mock" in sys.argv
 
@@ -92,7 +96,7 @@ def _show_first_run_setup(current_key):
             try:
                 with open(key_file, "w", encoding="utf-8") as f:
                     f.write(key)
-                print(f"[Setup] API Key 已保存到 {key_file}")
+                log.info("API Key 已保存到 %s", key_file)
             except OSError:
                 pass
         from app.utils.config_loader import get_config, save_config
@@ -129,6 +133,7 @@ def _resolve_api_key(config):
 
 
 def main():
+    setup_logging(verbose="--verbose" in sys.argv)
     from app.ai.generator import cleanup_temp_files
     cleanup_temp_files()
 
@@ -139,7 +144,7 @@ def main():
     video_path = _get_video_path(config)
 
     if video_path:
-        print(f"[System] 视频文件模式: {video_path}")
+        log.info("视频文件模式: %s", video_path)
 
     # Must create QApplication before any QWidget
     app = QApplication(sys.argv)
@@ -157,7 +162,7 @@ def main():
     animation_queue = Queue(maxsize=20)
     stop_event = Event()
 
-    print(f"[System] 正在启动视频流与 AI 消费者进程... {'(Mock 模式: 跳过 ComfyUI)' if MOCK_MODE else ''}")
+    log.info("正在启动视频流与 AI 消费者进程...%s", ' (Mock 模式: 跳过 ComfyUI)' if MOCK_MODE else '')
 
     p_producer = Process(target=producer, args=(frame_queue, stop_event, video_path))
     p_consumer = Process(target=consumer, args=(
@@ -185,7 +190,7 @@ def main():
     if not MOCK_MODE:
         comfy_mgr.start()
 
-    print("[System] 正在启动图形界面...")
+    log.info("正在启动图形界面...")
     window = FaceDoodleWindow(display_queue, command_queue, adjustment_queue, gallery_queue, draw_queue, animation_queue)
 
     w = prefs.get("window_width", 1280)
@@ -195,7 +200,7 @@ def main():
 
     exit_code = app.exec_()
 
-    print("[System] 正在关闭系统，清理子进程...")
+    log.info("正在关闭系统，清理子进程...")
     stop_event.set()
 
     p_producer.join(timeout=5)

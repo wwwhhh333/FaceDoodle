@@ -358,6 +358,9 @@ class DispGenProgress:
     action: str = Disp.GEN_PROGRESS
     current: int = 0
     total: int = 0
+    step: int = 0
+    total_steps: int = 0
+    preview_path: str = ""
     message: str = ""
     done: bool = False
 

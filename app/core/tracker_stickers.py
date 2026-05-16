@@ -1,5 +1,6 @@
 """Sticker lifecycle management mixin for ConsumerProcessor."""
 
+import logging
 import uuid
 
 from app.core.protocol import (
@@ -7,6 +8,8 @@ from app.core.protocol import (
     GalLoadTemplate, GalLoadSticker, GalMergeGroup,
     DispStickerSaved,
 )
+
+log = logging.getLogger(__name__)
 from app.utils import storage
 from app.core.renderer import composite_stickers_to_merged
 
@@ -40,7 +43,7 @@ class StickerManager:
 
     def _handle_add_sticker(self, gmsg):
         if len(self.active_stickers) >= self.MAX_STICKERS:
-            print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，忽略添加请求")
+            log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.MAX_STICKERS)
             return
         sid = gmsg.sticker_id
         if not sid:
@@ -106,7 +109,7 @@ class StickerManager:
         t = gmsg.template
         if t and t.get("image") is not None:
             if len(self.active_stickers) >= self.MAX_STICKERS:
-                print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，忽略添加请求")
+                log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.MAX_STICKERS)
                 return
             iid = self._add_sticker_instance(
                 t["image"], t["id"],
@@ -135,7 +138,7 @@ class StickerManager:
         sid = gmsg.sticker_id
         if sid:
             if len(self.active_stickers) >= self.MAX_STICKERS:
-                print(f"[Consumer] 贴纸数量已达上限 ({self.MAX_STICKERS})，忽略添加请求")
+                log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.MAX_STICKERS)
                 return
             loaded, meta = storage.get_sticker(sid)
             if loaded is not None and meta is not None:

@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 
 import cv2
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 BRUSH_DIR = "assets/brushes"
 CONFIG_PATH = os.path.join(BRUSH_DIR, "brushes.json")
@@ -183,14 +186,14 @@ def load_brush_tip(tip_filename, size):
 
     path = os.path.join(BRUSH_DIR, tip_filename)
     if not os.path.exists(path):
-        print(f"[Brush] 警告: 笔刷蒙版文件不存在: {path}")
+        log.warning("笔刷蒙版文件不存在: %s", path)
         return None
 
     # 用 imdecode 代替 imread，解决 Windows 上 OpenCV 不支持中文路径的问题
     raw = np.fromfile(path, dtype=np.uint8)
     tip = cv2.imdecode(raw, cv2.IMREAD_UNCHANGED)
     if tip is None:
-        print(f"[Brush] 警告: 无法读取笔刷蒙版: {path}")
+        log.warning("无法读取笔刷蒙版: %s", path)
         return None
     if tip.ndim == 2:
         # 灰度图 → alpha 通道 (白=不透明, 黑=透明)

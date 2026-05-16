@@ -1,10 +1,14 @@
 # 区域透视贴合与贴纸 Alpha 融合渲染
 
+import logging
 import math
 import time
 
 import cv2
 import numpy as np
+
+log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)  # DEBUG fires per-frame → keep at INFO
 
 
 def _pt(value):
@@ -277,7 +281,7 @@ def render_scene(frame, face_landmarks, active_content, adjustment=None):
     try:
         frame = _warp_sticker_onto_quad(frame, sticker, quad)
     except Exception as e:
-        print(f"[Renderer] 渲染出错: {e}")
+        log.error("渲染出错: %s", e)
         return frame
 
     # 编辑模式：绘制贴纸轮廓
@@ -387,17 +391,17 @@ def composite_stickers_to_merged(active_stickers, adjustments, face_data):
     accounts for canvas expansion so content aligns correctly when placed.
     """
     if not active_stickers:
-        print("[Composite] 没有贴纸实例")
+        log.debug("没有贴纸实例")
         return None, None, 1.0, 0.0, 0.0
     if not face_data or "nose_tip" not in face_data:
-        print("[Composite] 无人脸数据或缺少 nose_tip")
+        log.debug("无人脸数据或缺少 nose_tip")
         return None, None, 1.0, 0.0, 0.0
 
     face_w = max(float(face_data.get("face_width", 1.0)), 1.0)
 
     full_rect = face_data.get("landmark_rects", {}).get("full_face")
     if not full_rect:
-        print("[Composite] 缺少 full_face 区域")
+        log.debug("缺少 full_face 区域")
         return None, None, 1.0, 0.0, 0.0
     _, _, fw, fh = full_rect
     full_aspect = fw / max(float(fh), 0.001)
@@ -408,7 +412,7 @@ def composite_stickers_to_merged(active_stickers, adjustments, face_data):
 
     full_quad = _build_location_quad(face_data, "full_face", (init_canvas_h, init_canvas_w, 4), 1.0)
     if full_quad is None:
-        print("[Composite] 无法构建 full_face quad")
+        log.warning("无法构建 full_face quad")
         return None, None, 1.0, 0.0, 0.0
     full_quad = _apply_head_pose_skew(full_quad, face_data)
 
@@ -465,10 +469,10 @@ def composite_stickers_to_merged(active_stickers, adjustments, face_data):
 
             sticker_data.append((sticker, canvas_quad))
         except Exception as e:
-            print(f"[Composite] 贴纸预处理异常: {e}")
+            log.error("贴纸预处理异常: %s", e)
 
     if not sticker_data:
-        print("[Composite] 没有有效的贴纸数据")
+        log.debug("没有有效的贴纸数据")
         return None, None, 1.0, 0.0, 0.0
 
     # Find bounding box of all canvas quads
@@ -545,12 +549,13 @@ def composite_stickers_to_merged(active_stickers, adjustments, face_data):
 
             composited_count += 1
         except Exception as e:
-            print(f"[Composite] 贴纸合成异常: {e}")
+            log.error("贴纸合成异常: %s", e)
 
     if composited_count == 0:
-        print("[Composite] 没有成功合成任何贴纸")
+        log.warning("没有成功合成任何贴纸")
         return None, None, 1.0, 0.0, 0.0
 
-    print(f"[Composite] 合成完成: {composited_count} 枚 → {final_canvas_w}x{final_canvas_h} "
-          f"(scale={placement_scale:.2f}, offset=({offset_x:.3f},{offset_y:.3f}))")
+    log.debug("合成完成: %d 枚 → %dx%d (scale=%.2f, offset=(%.3f,%.3f))",
+              composited_count, final_canvas_w, final_canvas_h,
+              placement_scale, offset_x, offset_y)
     return merged, "full_face", placement_scale, offset_x, offset_y

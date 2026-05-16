@@ -1,11 +1,14 @@
 """Export animation clips to MP4/GIF files."""
 
+import logging
 import os
 import cv2
 import numpy as np
 
 from app.core.animation.clip import evaluate_clip
 from app.core.renderer import render_scene
+
+log = logging.getLogger(__name__)
 
 
 def export_animation(clip, sticker, fps, output_path, face_data,
@@ -76,6 +79,6 @@ def _write_gif(frames, output_path, fps):
         rgb_frames = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames]
         imageio.mimsave(output_path, rgb_frames, duration=duration, loop=0)
     except ImportError:
-        print("[Export] imageio not installed; falling back to mp4")
+        log.warning("imageio 未安装，回退到 mp4")
         _write_mp4(frames, output_path.replace(".gif", ".mp4"), fps,
                     (frames[0].shape[1], frames[0].shape[0]))

@@ -3,6 +3,9 @@ import time
 import socket
 import os
 import sys
+import logging
+
+log = logging.getLogger(__name__)
 
 
 def _resolve_launch(install_path):
@@ -62,17 +65,17 @@ class ComfyUIManager:
 
     def start(self):
         if not self.enabled:
-            print("[ComfyManager] 未配置 ComfyUI 路径，跳过自动启动")
+            log.info("未配置 ComfyUI 路径，跳过自动启动")
             return False
 
         launch = _resolve_launch(self.install_path)
         if not launch:
-            print(f"[ComfyManager] 在 {self.install_path} 中未找到可启动的文件")
+            log.warning("在 %s 中未找到可启动的文件", self.install_path)
             return False
 
         executable, args, cwd = launch
         cmd = [executable] + args
-        print(f"[ComfyManager] 启动 ComfyUI: {' '.join(cmd)}")
+        log.info("启动 ComfyUI: %s", ' '.join(cmd))
         try:
             self._process = subprocess.Popen(
                 cmd,
@@ -81,23 +84,23 @@ class ComfyUIManager:
                 stderr=subprocess.DEVNULL,
             )
         except OSError as e:
-            print(f"[ComfyManager] 启动失败: {e}")
+            log.error("ComfyUI 启动失败: %s", e)
             return False
 
-        print("[ComfyManager] 等待 ComfyUI 就绪...")
+        log.info("等待 ComfyUI 就绪...")
         if check_comfy_ready(self.server_address):
-            print("[ComfyManager] ComfyUI 已就绪")
+            log.info("ComfyUI 已就绪")
             return True
         else:
-            print("[ComfyManager] ComfyUI 启动超时，请手动检查")
+            log.warning("ComfyUI 启动超时，请手动检查")
             return False
 
     def stop(self):
         if self._process and self._process.poll() is None:
-            print("[ComfyManager] 正在关闭 ComfyUI...")
+            log.info("正在关闭 ComfyUI...")
             self._process.terminate()
             try:
                 self._process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self._process.kill()
-            print("[ComfyManager] ComfyUI 已关闭")
+            log.info("ComfyUI 已关闭")

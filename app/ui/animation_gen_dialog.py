@@ -48,7 +48,7 @@ class AnimationGenDialog(QDialog):
 
         cfg = get_config()
         presets = cfg.get("style", {}).get("presets", {})
-        selected = cfg.get("style", {}).get("selected_preset", "flat_vector")
+        selected = cfg.get("style", {}).get("selected_preset", "pixel_art")
         preset_name = presets.get(selected, {}).get("name", selected)
         style_label = QLabel(f"风格: {preset_name}")
         style_label.setStyleSheet(f"color: {INK_MUTED_48}; {font_css('fine-print')}")
