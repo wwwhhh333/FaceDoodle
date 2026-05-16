@@ -63,6 +63,10 @@ def save_sticker(sticker_bgra, metadata):
     if group_id:
         entry["group_id"] = group_id
 
+    views = metadata.get("views")
+    if views:
+        entry["views"] = views
+
     with _index_lock:
         index = _load_index()
         index["stickers"].append(entry)
@@ -217,6 +221,44 @@ def get_sticker_adjustments(sticker_id):
                 "rotation": s.get("rotation", 0.0),
                 "scale_mult": s.get("scale_mult", 1.0),
             }
+    return None
+
+
+def save_view_variant(sticker_id, angle_key, image_bgra):
+    """Save a single angle-view variant for a sticker and update index.json."""
+    variant_name = f"{sticker_id}_{angle_key}.png"
+    variant_path = os.path.join(GALLERY_DIR, variant_name)
+    cv2.imwrite(variant_path, image_bgra)
+
+    with _index_lock:
+        index = _load_index()
+        for s in index["stickers"]:
+            if s["id"] == sticker_id:
+                views = s.setdefault("views", {})
+                views[angle_key] = variant_name
+                break
+        _save_index(index)
+
+    return variant_name
+
+
+def load_view_variants(sticker_id):
+    """Load all view variants for a sticker from disk. Returns dict[angle_key, RGBA ndarray] or None."""
+    index = _load_index()
+    for s in index.get("stickers", []):
+        if s["id"] == sticker_id:
+            views_meta = s.get("views")
+            if not views_meta:
+                return None
+            variants = {}
+            for key, filename in views_meta.items():
+                path = os.path.join(GALLERY_DIR, filename)
+                if os.path.exists(path):
+                    raw = np.fromfile(path, dtype=np.uint8)
+                    img = cv2.imdecode(raw, cv2.IMREAD_UNCHANGED)
+                    if img is not None:
+                        variants[key] = img
+            return variants if variants else None
     return None
 
 
