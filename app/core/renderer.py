@@ -403,36 +403,6 @@ def apply_head_pose_skew(quad, face_landmarks):
     return _apply_head_pose_skew(quad, face_landmarks)
 
 
-def blend_sticker_views(view_a, view_b, t):
-    """Cross-fade two RGBA images. t=0 → all a, t=1 → all b."""
-    return (view_a.astype(np.float32) * (1.0 - t) + view_b.astype(np.float32) * t).astype(np.uint8)
-
-
-def select_view_sticker(instance, yaw_deg):
-    """Select or blend sticker views based on head yaw angle.
-
-    yaw_deg > 0: head turned right → left side of sticker visible → use left_45
-    yaw_deg < 0: head turned left → right side of sticker visible → use right_45
-    """
-    views = instance.get("views")
-    if not views:
-        return instance["sticker"]
-
-    front = views.get("front", instance["sticker"])
-    ayaw = abs(yaw_deg)
-
-    if ayaw < 15:
-        return front
-    elif ayaw < 45:
-        t = (ayaw - 15.0) / 30.0
-        side_key = "left_45" if yaw_deg > 0 else "right_45"
-        side = views.get(side_key, front)
-        return blend_sticker_views(front, side, t)
-    else:
-        side_key = "left_45" if yaw_deg > 0 else "right_45"
-        return views.get(side_key, front)
-
-
 def composite_stickers_to_merged(active_stickers, adjustments, face_data):
     """Merge multiple sticker instances into a single composite RGBA image.
 

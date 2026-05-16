@@ -40,8 +40,7 @@ DEFAULT_CONFIG = {
         "positive_suffix": "isolated accessory on white background, no face, no person, product shot, floating object",
         "symmetry_enabled": False,
         "symmetry_positive_suffix": "symmetrical design, perfectly mirrored, balanced composition",
-        "symmetry_negative_suffix": "asymmetrical, uneven, unbalanced, lopsided",
-        "multi_view_enabled": False,
+        "symmetry_negative_suffix": "asymmetrical, uneven, unbalanced, lopsided"
     },
     "preferences": {
         "default_region": "forehead_top",

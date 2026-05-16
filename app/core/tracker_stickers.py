@@ -31,9 +31,6 @@ class StickerManager:
             "sticker": sticker_img, "location": location,
             "scale": scale, "prompt": prompt,
         }
-        views = storage.load_view_variants(sid)
-        if views:
-            instance["views"] = views
         if anim_meta and anim_meta.get("is_animated"):
             instance["is_animated"] = True
             instance["frame_count"] = anim_meta.get("frame_count", 16)

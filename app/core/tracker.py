@@ -12,8 +12,7 @@ from app.ai.agent import FaceDoodleAgent
 from app.ai.generator import ComfyClient
 from app.core.face_mesh import FaceDetector
 from app.core.renderer import (render_scene, render_loading_progress, render_face_mesh,
-                                apply_head_pose_skew, _build_location_quad,
-                                select_view_sticker)
+                                apply_head_pose_skew, _build_location_quad)
 from app.core.face_draw import FaceDrawCanvas
 from app.core.animation import AnimationEngine
 from app.core.animation import TextureAnimator, extract_sprite_frame
@@ -367,7 +366,6 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self._last_synced_state = None   # fingerprint to skip no-op _sync_state_to_ui pushes
         self._last_face_fp = None        # (fc_x, fc_y, fw) for change detection
         self._pending_group = None       # dict: {group_id, group_name, member_ids: []}
-        self._pending_multi_view = []    # list of (sticker_id, prompt, sticker_bgra) awaiting variant gen
         self._had_stickers = False       # track whether stickers were ever present (for auto-clear)
 
     # ── public API ──
@@ -521,14 +519,6 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             self._pending_group = None
             self.display_queue.put(DispGenProgress(done=True, message=new_content.get("assistant_message", "生成完成")))
             log.debug("生成完成, 历史: %d 条", len(self.conversation_history))
-            if self._pending_multi_view and self._multi_view_enabled():
-                info_snapshot = list(self._pending_multi_view)
-                threading.Thread(
-                    target=self._generate_view_variants_thread,
-                    args=(info_snapshot,),
-                    daemon=True,
-                ).start()
-            self._pending_multi_view = []
             return
 
         # ── agent question ──
@@ -548,12 +538,6 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 return
             try:
                 sticker_id = self._save_generated_sticker(new_content)
-                if sticker_id is not None:
-                    self._pending_multi_view.append((
-                        sticker_id,
-                        new_content.get("prompt", ""),
-                        new_content.get("sticker"),
-                    ))
                 group_id = new_content.get("group_id")
                 if group_id and sticker_id is not None:
                     self._accumulate_group_member(
@@ -608,61 +592,6 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self.active_content = new_content  # backward compat
         log.info("贴纸已保存: %s", sticker_id)
         return sticker_id
-
-    def _multi_view_enabled(self):
-        from app.utils.config_loader import get_config
-        return get_config().get("generation", {}).get("multi_view_enabled", False)
-
-    def _generate_view_variants_thread(self, stickers_info):
-        """Generate left_45 and right_45 view variants for each sticker asynchronously."""
-        import os as _os
-        from app.ai.generator import ComfyClient, generate_view_variant
-        from app.utils import storage as _storage
-
-        client = ComfyClient()
-        temp_dir = _os.path.join("assets", "temp")
-
-        for sticker_id, prompt, sticker_bgra in stickers_info:
-            front_path = _os.path.join(temp_dir, f"{sticker_id}_front.png")
-            try:
-                if isinstance(sticker_bgra, (bytes, bytearray)):
-                    sticker_bgra = cv2.imdecode(
-                        np.frombuffer(sticker_bgra, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-                # If received as 3-channel, convert to BGRA
-                if sticker_bgra is not None and sticker_bgra.ndim == 2:
-                    sticker_bgra = cv2.cvtColor(sticker_bgra, cv2.COLOR_GRAY2BGRA)
-                elif sticker_bgra is not None and sticker_bgra.shape[2] == 3:
-                    sticker_bgra = cv2.cvtColor(sticker_bgra, cv2.COLOR_BGR2BGRA)
-
-                cv2.imwrite(front_path, sticker_bgra)
-
-                for angle, view_key in [("left 45", "left_45"), ("right 45", "right_45")]:
-                    variant = generate_view_variant(
-                        client, temp_dir, front_path, angle, prompt,
-                    )
-                    if variant is not None:
-                        _storage.save_view_variant(sticker_id, view_key, variant)
-                        log.info("视角变体已保存: %s -> %s", sticker_id, view_key)
-                    else:
-                        log.warning("视角变体生成失败: %s -> %s", sticker_id, view_key)
-            except Exception as e:
-                log.error("视角变体生成异常 (%s): %s", sticker_id, e)
-            finally:
-                front_temp = front_path  # for finally
-                try:
-                    if _os.path.exists(front_temp):
-                        _os.unlink(front_temp)
-                except OSError:
-                    pass
-
-        # Update active instances with loaded views
-        for info in stickers_info:
-            sid = info[0]
-            variants = _storage.load_view_variants(sid)
-            for instance in self.active_stickers:
-                if instance.get("sticker_id") == sid and variants:
-                    instance["views"] = variants
-                    log.debug("贴纸实例已更新视角: %s", sid)
 
     def _accumulate_group_member(self, group_id, group_name, sticker_id):
         if self._pending_group is None:
@@ -846,14 +775,11 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                     adj["scale_mult"] = anim["scale_mult"] * manual["scale_mult"]
                     adj["opacity"] = anim.get("opacity", 1.0)
             adj["edit_mode"] = (iid == self.edit_target_id)
-            base = instance["sticker"]
-            yaw = face_data.get("yaw", 0.0)
-            base = select_view_sticker(instance, yaw)
             if instance.get("is_animated"):
                 frame_idx, cols, rows = self.texture_animator.get_frame_params(iid)
-                sticker = extract_sprite_frame(base, frame_idx, cols, rows)
+                sticker = extract_sprite_frame(instance["sticker"], frame_idx, cols, rows)
             else:
-                sticker = base
+                sticker = instance["sticker"]
             content = {
                 "sticker": sticker,
                 "location": instance["location"],

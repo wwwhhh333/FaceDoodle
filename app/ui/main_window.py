@@ -377,14 +377,6 @@ class FaceDoodleWindow(QMainWindow):
         cfg = get_config()
         self.symmetry_check.setChecked(cfg.get("generation", {}).get("symmetry_enabled", False))
 
-        self.multiview_check = QCheckBox("立体视角")
-        self.multiview_check.setToolTip("生成贴纸的正面和侧面多视角变体，转头时自动切换")
-        self.multiview_check.setCursor(Qt.PointingHandCursor)
-        self.multiview_check.setStyleSheet(f"QCheckBox {{ {font_css('body')} }}")
-        self.multiview_check.stateChanged.connect(self._on_multiview_toggled)
-        input_layout.addWidget(self.multiview_check)
-        self.multiview_check.setChecked(cfg.get("generation", {}).get("multi_view_enabled", False))
-
         self.send_btn = StyledButton("生成贴纸", "primary")
         self.send_btn.clicked.connect(self.send_command)
         input_layout.addWidget(self.send_btn)
@@ -1043,12 +1035,6 @@ class FaceDoodleWindow(QMainWindow):
 
     def _save_symmetry_to_disk(self, enabled):
         self._update_config_json(lambda cfg: cfg.setdefault("generation", {}).update(symmetry_enabled=enabled))
-
-    def _on_multiview_toggled(self, state):
-        enabled = state == Qt.Checked
-        cfg = get_config()
-        cfg.setdefault("generation", {})["multi_view_enabled"] = enabled
-        self._update_config_json(lambda cfg: cfg.setdefault("generation", {}).update(multi_view_enabled=enabled))
 
     def _check_comfy_status(self):
         if "--mock" in sys.argv:

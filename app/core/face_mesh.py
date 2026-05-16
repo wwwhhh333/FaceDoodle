@@ -196,22 +196,6 @@ class FaceDetector:
         except cv2.error:
             pass
 
-        # 计算有符号偏航角 (度)。正值=头往右转(贴纸左面可见)，负值=头往左转
-        rvec = result.get("rvec")
-        if rvec is not None:
-            R, _ = cv2.Rodrigues(rvec)
-            yaw = float(np.degrees(np.arctan2(R[1, 0], R[0, 0])))
-        else:
-            left_dist = float(nose_tip[0] - left_cheek[0])
-            right_dist = float(right_cheek[0] - nose_tip[0])
-            total_h = left_dist + right_dist
-            if total_h > 0:
-                yaw_ratio = (right_dist - left_dist) / total_h
-                yaw = yaw_ratio * 90.0
-            else:
-                yaw = 0.0
-        result["yaw"] = yaw
-
         result["model_face_width"] = 0.14
 
         all_pts = []
