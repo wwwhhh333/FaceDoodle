@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt, QPointF, pyqtSignal
 
 from app.core.protocol import (
     AnimPlay, AnimPause, AnimStop, AnimSetLoop, AnimSeek,
-    AnimAddKeyframe, AnimRemoveKeyframe, AnimExport,
+    AnimAddKeyframe, AnimRemoveKeyframe, AnimUpdateKeyframe, AnimExport,
 )
 from app.core.animation import EASING_FUNCTIONS
 from app.ui.theme import (PRIMARY, CANVAS, INK, SURFACE_TILE_1,
@@ -174,6 +174,7 @@ class AnimationTimeline(QWidget):
         self._keyframes = []        # list of Keyframe dicts
         self._selected_idx = -1
         self._clip_data = None
+        self._last_pushed_kf = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
@@ -300,10 +301,12 @@ class AnimationTimeline(QWidget):
 
     def set_instance(self, instance_id):
         self._instance_id = instance_id
+        self._last_pushed_kf = None
 
     def update_clip(self, clip_data):
         """Called when AnimClipUpdated arrives from consumer."""
         self._clip_data = clip_data
+        self._last_pushed_kf = None
         self._duration = clip_data.get("duration", 2.0)
         self._loop = clip_data.get("loop", False)
         self._keyframes = clip_data.get("keyframes", [])
@@ -383,10 +386,33 @@ class AnimationTimeline(QWidget):
         self._enable_property_panel(False)
         self._update_display()
 
+    def _push_keyframe_update(self, idx):
+        if idx < 0 or idx >= len(self._keyframes):
+            return
+        kf = self._keyframes[idx]
+        # Skip if unchanged from last push (rate-limits 60 Hz drag / spinbox events)
+        key = (idx, kf.get("time"), kf.get("offset_x"), kf.get("offset_y"),
+               kf.get("rotation"), kf.get("scale_mult"), kf.get("opacity"), kf.get("easing"))
+        if self._last_pushed_kf == key:
+            return
+        self._last_pushed_kf = key
+        self._queue.put(AnimUpdateKeyframe(
+            instance_id=self._instance_id,
+            keyframe_index=idx,
+            time=kf.get("time", 0.0),
+            offset_x=kf.get("offset_x", 0.0),
+            offset_y=kf.get("offset_y", 0.0),
+            rotation=kf.get("rotation", 0.0),
+            scale_mult=kf.get("scale_mult", 1.0),
+            opacity=kf.get("opacity", 1.0),
+            easing=kf.get("easing", "linear"),
+        ))
+
     def _on_keyframe_dragged(self, idx, new_time):
         if idx >= len(self._keyframes):
             return
         self._keyframes[idx]["time"] = new_time
+        self._push_keyframe_update(idx)
         self._update_display()
 
     def _on_add_keyframe(self):
@@ -417,6 +443,7 @@ class AnimationTimeline(QWidget):
         kf["scale_mult"] = self._spin_scale.value()
         kf["opacity"] = self._spin_opacity.value()
         kf["easing"] = self._easing_combo.currentText()
+        self._push_keyframe_update(self._selected_idx)
 
     def _on_export(self):
         if not self._instance_id:

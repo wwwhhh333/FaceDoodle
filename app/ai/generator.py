@@ -15,7 +15,8 @@ from app.utils.config_loader import build_negative_prompt
 
 log = logging.getLogger(__name__)
 
-_ws_available = True  # cached availability of websockets package
+_ws_fail_time = 0          # epoch of last WebSocket failure; 0 = never failed
+_WS_COOLDOWN = 120          # seconds before re-attempting WebSocket
 
 TEMP_MAX_FILES = 50
 
@@ -182,86 +183,62 @@ class ComfyClient:
             return 3
         return 4
 
-    def _submit_workflow(self, prompt_text, workflow_name, negative_prompt=None,
-                          input_image_path=None, seed=None):
-        """Load workflow, inject prompt/LoRA/seed/image, submit to ComfyUI, return (workflow, prompt_id)."""
-        workflow_path = os.path.join(os.path.dirname(__file__), "workflows", workflow_name)
-        with open(workflow_path, 'r', encoding='utf-8') as f:
-            workflow = json.load(f)
+    # ── workflow injection helpers ──
 
-        # Inject prompt
-        prompt_updated = False
-        for node_id, node in workflow.items():
-            title = node.get("_meta", {}).get("title", "")
-            if title == "CLIP Text Encode (Prompt)":
-                node["inputs"]["text"] = prompt_text
-                prompt_updated = True
-            elif title == "CLIP Text Encode (Negative)":
-                base_neg = negative_prompt or str(node.get("inputs", {}).get("text", "")).strip() or None
-                node["inputs"]["text"] = build_negative_prompt(override=base_neg)
+    def _bypass_lora_nodes(self, workflow):
+        """Remove LoraLoader nodes and rewire downstream references to the checkpoint.
 
-        if not prompt_updated:
-            raise ValueError("工作流中未找到可用的正向提示词节点")
-
-        # LoRA
-        lora_cfg = self._cfg.get("model", {}).get("lora", {})
-        if lora_cfg:
-            for node in workflow.values():
-                if node.get("class_type") == "LoraLoader":
-                    if lora_cfg.get("name"):
-                        node["inputs"]["lora_name"] = lora_cfg["name"]
-                        log.debug("使用 LoRA: %s", lora_cfg['name'])
-                    if lora_cfg.get("strength_model") is not None:
-                        node["inputs"]["strength_model"] = lora_cfg["strength_model"]
-                    if lora_cfg.get("strength_clip") is not None:
-                        node["inputs"]["strength_clip"] = lora_cfg["strength_clip"]
-                    log.debug("LoRA 强度: model=%s, clip=%s",
-                              node['inputs'].get('strength_model'), node['inputs'].get('strength_clip'))
-                    break
-        else:
-            log.debug("未配置 LoRA，使用工作流默认值")
-
-        # Upload input image (img2img)
-        if input_image_path and os.path.exists(input_image_path):
-            uploaded_name = self._upload_image(input_image_path)
-            if uploaded_name:
-                load_image_set = False
-                for node in workflow.values():
-                    if node.get("class_type") == "LoadImage":
-                        node["inputs"]["image"] = uploaded_name
-                        load_image_set = True
-                        log.debug("img2img: 已上传并设置 LoadImage -> %s", uploaded_name)
-                        break
-                if not load_image_set:
-                    log.warning("工作流中未找到 LoadImage 节点，input_image_path 被忽略")
-            else:
-                log.warning("图片上传失败，将按 text-to-image 模式运行")
-
-        # Filename prefix
-        slug_parts = [p.strip() for p in prompt_text.split(",") if p.strip()]
-        short_prompt = "_".join(slug_parts[:2]) if len(slug_parts) >= 2 else slug_parts[0] if slug_parts else "sticker"
-        slug = re.sub(r'[^\w]', '_', short_prompt.lower())
-        slug = re.sub(r'_+', '_', slug).strip('_')[:50]
-        for node in workflow.values():
-            if node.get("class_type") == "SaveImage":
-                node["inputs"]["filename_prefix"] = f"FaceDoodle/{slug}"
-                break
-
-        # Seed
+        When no LoRA is configured, hardcoded placeholder names in the workflow
+        would cause ComfyUI to error.  Bypassing the node entirely avoids that.
+        """
+        checkpoint_id = None
+        lora_ids = []
         for nid, node in workflow.items():
-            if node.get("class_type") == "KSampler":
-                if seed is not None:
-                    node.setdefault("inputs", {})["seed"] = seed
-                else:
-                    node.setdefault("inputs", {})["seed"] = uuid.uuid4().int & ((1 << 63) - 1)
-                break
+            ct = node.get("class_type", "")
+            if ct == "CheckpointLoaderSimple":
+                checkpoint_id = nid
+            elif ct == "LoraLoader":
+                lora_ids.append(nid)
 
-        # Submit
-        p = {"prompt": workflow}
+        if not lora_ids or checkpoint_id is None:
+            return
+
+        # Build reverse-reference index: node_id → [(node, key, list_index), ...]
+        refs = {}
+        for nid, node in workflow.items():
+            for key, value in node.get("inputs", {}).items():
+                if isinstance(value, list) and len(value) >= 2:
+                    target = str(value[0])
+                    refs.setdefault(target, []).append((node, key))
+
+        for lora_id in lora_ids:
+            for node, key in refs.get(lora_id, []):
+                node["inputs"][key][0] = checkpoint_id
+            del workflow[lora_id]
+            log.debug("已绕过 LoRA 节点 %s，直接连接 checkpoint %s", lora_id, checkpoint_id)
+
+    @staticmethod
+    def _make_slug(prompt_text):
+        """Build a safe filename slug from a prompt, falling back to a random id.
+
+        Extracts ASCII word runs so Chinese/emoji prompts still produce
+        readable filenames (e.g. "一副赛博朋克护目镜" → random hex).
+        """
+        slug_parts = [p.strip() for p in prompt_text.split(",") if p.strip()]
+        short = "_".join(slug_parts[:2]) if len(slug_parts) >= 2 else slug_parts[0] if slug_parts else "sticker"
+        ascii_words = re.findall(r'[a-zA-Z0-9]{2,}', short.lower())
+        if ascii_words:
+            slug = "_".join(ascii_words[:3])[:50]
+        else:
+            slug = uuid.uuid4().hex[:8]
+        return slug
+
+    def _post_prompt(self, workflow):
+        """Submit a populated workflow to ComfyUI and return the prompt_id."""
         try:
             http_res = requests.post(
                 f"http://{self.server_address}/prompt",
-                json=p, timeout=30,
+                json={"prompt": workflow}, timeout=30,
             )
         except requests.RequestException as e:
             raise RuntimeError(
@@ -288,7 +265,108 @@ class ComfyClient:
                 f"ComfyUI 返回了异常的响应: {json.dumps(res, ensure_ascii=False)[:500]}"
             )
 
-        return workflow, res['prompt_id']
+        return res["prompt_id"]
+
+    def _inject_workflow(self, workflow, prompt_text, negative_prompt=None,
+                         input_image_path=None, seed=None, filename_prefix=None):
+        """Inject prompt, LoRA, image, filename, and seed into a loaded workflow dict.
+
+        Modifies *workflow* in place.  Returns the workflow for chaining.
+        """
+        prompt_found = False
+        need_image = input_image_path and os.path.exists(input_image_path)
+        slug = self._make_slug(filename_prefix or prompt_text)
+        lora_cfg = self._cfg.get("model", {}).get("lora", {})
+        have_lora_node = False
+        need_lora = bool(lora_cfg and lora_cfg.get("name"))
+
+        if need_image:
+            uploaded_name = self._upload_image(input_image_path)
+
+        for node in workflow.values():
+            ct = node.get("class_type")
+            title = node.get("_meta", {}).get("title", "")
+
+            if title == "CLIP Text Encode (Prompt)":
+                node["inputs"]["text"] = prompt_text
+                prompt_found = True
+            elif title == "CLIP Text Encode (Negative)":
+                base_neg = negative_prompt or str(node.get("inputs", {}).get("text", "")).strip() or None
+                node["inputs"]["text"] = build_negative_prompt(override=base_neg)
+            elif ct == "SaveImage":
+                node["inputs"]["filename_prefix"] = f"FaceDoodle/{slug}"
+            elif ct == "KSampler":
+                node.setdefault("inputs", {})["seed"] = (
+                    seed if seed is not None else uuid.uuid4().int & ((1 << 63) - 1)
+                )
+            elif ct == "LoadImage" and need_image and uploaded_name:
+                node["inputs"]["image"] = uploaded_name
+                need_image = False  # Only set the first LoadImage
+            elif ct == "LoraLoader":
+                have_lora_node = True
+                if need_lora:
+                    node["inputs"]["lora_name"] = lora_cfg["name"]
+                    if lora_cfg.get("strength_model") is not None:
+                        node["inputs"]["strength_model"] = lora_cfg["strength_model"]
+                    if lora_cfg.get("strength_clip") is not None:
+                        node["inputs"]["strength_clip"] = lora_cfg["strength_clip"]
+                    need_lora = False  # Only inject the first LoraLoader
+
+        if not prompt_found:
+            raise ValueError("工作流中未找到可用的正向提示词节点")
+        if have_lora_node and not (lora_cfg and lora_cfg.get("name")):
+            self._bypass_lora_nodes(workflow)
+
+        return workflow
+
+    # ── submission ──
+
+    def _submit_workflow(self, prompt_text, workflow_name, negative_prompt=None,
+                          input_image_path=None, seed=None):
+        """Load workflow, inject prompt/LoRA/seed/image, submit, return (workflow, prompt_id)."""
+        workflow_path = os.path.join(os.path.dirname(__file__), "workflows", workflow_name)
+        with open(workflow_path, 'r', encoding='utf-8') as f:
+            workflow = json.load(f)
+
+        self._inject_workflow(workflow, prompt_text,
+                              negative_prompt=negative_prompt,
+                              input_image_path=input_image_path,
+                              seed=seed)
+        prompt_id = self._post_prompt(workflow)
+        return workflow, prompt_id
+
+    # ── generation (WebSocket + polling) ──
+
+    def _ws_in_cooldown(self):
+        global _ws_fail_time
+        if _ws_fail_time == 0:
+            return False
+        if time.time() - _ws_fail_time > _WS_COOLDOWN:
+            _ws_fail_time = 0
+            return False
+        return True
+
+    @staticmethod
+    def _ws_try_import():
+        try:
+            from websockets.sync.client import connect as ws_connect
+            return ws_connect
+        except ImportError:
+            return None
+
+    def _fallback_to_polling(self, reason, prompt_text, workflow_name,
+                              negative_prompt, timeout, input_image_path, seed,
+                              set_cooldown=False):
+        """Fall back to polling after a WebSocket failure."""
+        global _ws_fail_time
+        if set_cooldown:
+            _ws_fail_time = time.time()
+        log.warning("%s，回退到轮询模式", reason)
+        return self.generate_sync(prompt_text, workflow_name,
+                                   negative_prompt=negative_prompt,
+                                   timeout=timeout,
+                                   input_image_path=input_image_path,
+                                   seed=seed)
 
     def generate_sync_ws(self, prompt_text, workflow_name, negative_prompt=None,
                           timeout=None, input_image_path=None, seed=None,
@@ -296,23 +374,20 @@ class ComfyClient:
         """WebSocket-based generation with real-time step progress.
 
         Falls back to polling ``generate_sync()`` when the ``websockets``
-        package is unavailable.
+        package is unavailable, or after a transient WebSocket error (with
+        a cooldown before re-attempting).
         """
-        global _ws_available
-        if _ws_available:
-            try:
-                from websockets.sync.client import connect as ws_connect
-            except ImportError:
-                _ws_available = False
-                log.warning("websockets 未安装，回退到轮询模式")
+        if self._ws_in_cooldown():
+            return self._fallback_to_polling(
+                "WebSocket 冷却中", prompt_text, workflow_name,
+                negative_prompt, timeout, input_image_path, seed)
 
-        if not _ws_available:
-            log.debug("回退到轮询模式")
-            return self.generate_sync(prompt_text, workflow_name,
-                                       negative_prompt=negative_prompt,
-                                       timeout=timeout,
-                                       input_image_path=input_image_path,
-                                       seed=seed)
+        ws_connect = self._ws_try_import()
+        if ws_connect is None:
+            return self._fallback_to_polling(
+                "websockets 未安装", prompt_text, workflow_name,
+                negative_prompt, timeout, input_image_path, seed,
+                set_cooldown=True)
 
         if timeout is None:
             timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 120)
@@ -325,12 +400,9 @@ class ComfyClient:
         try:
             ws = ws_connect(ws_url, timeout=timeout)
         except Exception as e:
-            log.warning("WebSocket 连接失败，回退到轮询: %s", e)
-            return self.generate_sync(prompt_text, workflow_name,
-                                       negative_prompt=negative_prompt,
-                                       timeout=timeout,
-                                       input_image_path=input_image_path,
-                                       seed=seed)
+            return self._fallback_to_polling(
+                f"WebSocket 连接失败: {e}", prompt_text, workflow_name,
+                negative_prompt, timeout, input_image_path, seed)
 
         # Submit prompt AFTER WS connects, so no execution events are missed
         try:
@@ -342,13 +414,10 @@ class ComfyClient:
             )
         except Exception as e:
             ws.close()
-            _ws_available = False
-            log.warning("WebSocket 提交失败，回退到轮询: %s", e)
-            return self.generate_sync(prompt_text, workflow_name,
-                                       negative_prompt=negative_prompt,
-                                       timeout=timeout,
-                                       input_image_path=input_image_path,
-                                       seed=seed)
+            return self._fallback_to_polling(
+                f"WebSocket 提交失败: {e}", prompt_text, workflow_name,
+                negative_prompt, timeout, input_image_path, seed,
+                set_cooldown=True)
 
         previous_temp_files = self._snapshot_temp_files()
 
@@ -398,13 +467,10 @@ class ComfyClient:
                     )
 
         except Exception as e:
-            _ws_available = False
-            log.warning("WebSocket 异常，回退到轮询: %s", e)
-            return self.generate_sync(prompt_text, workflow_name,
-                                       negative_prompt=negative_prompt,
-                                       timeout=timeout,
-                                       input_image_path=input_image_path,
-                                       seed=seed)
+            return self._fallback_to_polling(
+                f"WebSocket 异常: {e}", prompt_text, workflow_name,
+                negative_prompt, timeout, input_image_path, seed,
+                set_cooldown=True)
         finally:
             ws.close()
 
@@ -484,74 +550,20 @@ class ComfyClient:
         with open(workflow_path, 'r', encoding='utf-8') as f:
             workflow = json.load(f)
 
-        # Inject prompt, negative, seed, frame_count
-        for node_id, node in workflow.items():
-            title = node.get("_meta", {}).get("title", "")
-            class_type = node.get("class_type", "")
-            if title == "CLIP Text Encode (Prompt)":
-                node["inputs"]["text"] = prompt_text
-            elif title == "CLIP Text Encode (Negative)":
-                base_neg = negative_prompt or str(node.get("inputs", {}).get("text", "")).strip() or None
-                node["inputs"]["text"] = build_negative_prompt(override=base_neg)
-            elif class_type == "KSampler":
-                if seed is not None:
-                    node.setdefault("inputs", {})["seed"] = int(seed)
-                else:
-                    node.setdefault("inputs", {})["seed"] = uuid.uuid4().int & ((1 << 63) - 1)
-            elif class_type == "EmptyLatentImage":
+        # Use shared injection for prompt, LoRA, image, seed, filename
+        self._inject_workflow(workflow, prompt_text,
+                              negative_prompt=negative_prompt,
+                              input_image_path=input_image_path,
+                              seed=seed)
+
+        # AnimateDiff-specific: set batch_size on EmptyLatentImage
+        for node in workflow.values():
+            if node.get("class_type") == "EmptyLatentImage":
                 node.setdefault("inputs", {})["batch_size"] = frame_count
-            elif class_type == "SaveImage":
-                slug = re.sub(r'[^\w]', '_', prompt_text.lower())[:40]
-                node["inputs"]["filename_prefix"] = f"FaceDoodle/anim_{slug}"
+                break
 
-        # Inject LoRA config
-        lora_cfg = self._cfg.get("model", {}).get("lora", {})
-        if lora_cfg and lora_cfg.get("name"):
-            for node in workflow.values():
-                if node.get("class_type") == "LoraLoader":
-                    node["inputs"]["lora_name"] = lora_cfg["name"]
-                    if "strength_model" in lora_cfg:
-                        node["inputs"]["strength_model"] = lora_cfg["strength_model"]
-                    if "strength_clip" in lora_cfg:
-                        node["inputs"]["strength_clip"] = lora_cfg["strength_clip"]
-                    break
-
-        # Upload input image
-        if input_image_path and os.path.exists(input_image_path):
-            uploaded_name = self._upload_image(input_image_path)
-            if uploaded_name:
-                for node in workflow.values():
-                    if node.get("class_type") == "LoadImage":
-                        node["inputs"]["image"] = uploaded_name
-                        break
-
+        prompt_id = self._post_prompt(workflow)
         previous_temp_files = self._snapshot_temp_files()
-
-        p = {"prompt": workflow}
-        try:
-            http_res = requests.post(
-                f"http://{self.server_address}/prompt",
-                json=p, timeout=30,
-            )
-        except requests.RequestException as e:
-            raise RuntimeError(f"无法连接 ComfyUI: {e}")
-
-        if http_res.status_code != 200:
-            try:
-                error_body = http_res.json()
-            except Exception:
-                error_body = http_res.text[:500]
-            raise RuntimeError(
-                f"ComfyUI 返回 HTTP {http_res.status_code}\n  响应内容: {json.dumps(error_body, ensure_ascii=False)[:1000]}"
-            )
-
-        res = http_res.json()
-        if "prompt_id" not in res:
-            error_msg = res.get("error", {})
-            detail = error_msg.get("message", str(error_msg)) if error_msg else "unknown"
-            raise RuntimeError(f"ComfyUI 工作流提交失败: {detail}")
-
-        prompt_id = res["prompt_id"]
 
         start_time = time.time()
         while time.time() - start_time < timeout:

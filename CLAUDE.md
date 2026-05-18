@@ -14,6 +14,13 @@ python app/main.py --mock
 
 API key priority: env var `DEEPSEEK_API_KEY` → `api_key.txt` (project root) → `config.json` `api_key` field. `api_key.txt` is gitignored and never written by the app (unlike config.json which is rewritten on close). ComfyUI must be running at the address in `config.json` (`comfyui.server_address`, default `127.0.0.1:8188`).
 
+## Logging
+
+Each process calls `setup_logging()` from `app/utils/logging_config.py` once at startup. Configures the **root logger** so `logging.getLogger(__name__)` works everywhere. Output:
+- **Console**: INFO+ (DEBUG in `--verbose` mode)
+- **File**: `logs/error.log` — WARNING+ with rotation (5 MB × 3 backups)
+- Noisy third-party loggers (`matplotlib`, `PIL`, `urllib3`, `asyncio`) are suppressed to WARNING
+
 ## Tests
 
 ```bash
@@ -21,7 +28,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_agent.py -v   # single file
 ```
 
-11 test files under `tests/`, pytest with fixtures in `conftest.py`. Tests cover agent, brush, config, templates, renderer, face_draw, storage, animation, protocol, and texture_anim. `test_agent.py` tests the keyword-fallback path (no API key needed).
+12 test files under `tests/` (278 test cases), pytest with fixtures in `conftest.py`. Tests cover agent, brush, config, templates, renderer, face_draw, storage, animation, protocol, and texture_anim. `test_agent.py` tests the keyword-fallback path (no API key needed).
 
 **After any code change**, run the full test suite. If the modified code has no test coverage, add tests before declaring the task complete. Passing unit tests do not guarantee correctness — runtime issues (Chinese path encoding, silent error drops, queue message handling) only surface when the app actually runs.
 
@@ -109,16 +116,39 @@ Conversation state lives in `ConsumerProcessor.conversation_history` (list of `{
 
 `GenerationState` is a thread-safe gating class — `_process_command_queue` skips new commands while `gen_state.is_generating` is True. Multi-sticker `generate` tasks run **sequentially** in the worker thread (each ComfyUI call blocks).
 
+### ComfyUI client (`app/ai/generator.py`)
+
+`ComfyClient` wraps the ComfyUI REST API. Supports two generation paths:
+
+- **WebSocket** (`generate_sync_ws`): Real-time step progress via the `websockets` package. Falls back to polling on transient errors, with a 120s cooldown between retry attempts (module-level `_ws_fail_time` / `_WS_COOLDOWN`).
+- **Polling** (`generate_sync`): Submits workflow JSON via REST, polls `/api/queue` until completion.
+
+Workflow JSON files live in `app/ai/workflows/`:
+- `transparent_workflow_api.json` — SDXL + Layer Diffusion for transparent PNG stickers
+- `img2img_workflow_api.json` — img2img (sketch → sticker)
+- `img2img_controlnet_workflow_api.json` — img2img with ControlNet Scribble refinement
+- `animatediff_workflow_api.json` — AnimateDiff for sprite-sheet texture animation
+
+`generate_animated_frames()` returns a list of BGRA frames from AnimateDiff output. Temp file cleanup (`cleanup_temp_files`) keeps `assets/temp/` at ≤50 files.
+
+### ComfyUI auto-management (`app/ai/comfy_manager.py`)
+
+`ComfyUIManager` manages the ComfyUI subprocess lifecycle. On startup, if `comfyui.install_path` is configured, resolves how to launch (`.bat`/`.cmd` → `main.py`), starts the subprocess, and waits for socket readiness. On application exit, terminates the subprocess (10s timeout then kill). Startup logs go to `assets/temp/comfyui_startup.log`.
+
 ### Animation system (`app/core/animation/`)
 
 Package with 5 modules:
 - `clip.py` — `AnimationClip` (keyframes + interpolation), `Keyframe` (time, easing, property values)
 - `engine.py` — `AnimationEngine` (per-instance playback state, clip management, evaluation)
 - `texture.py` — `TextureAnimator` (sprite-sheet frame extraction for animated stickers)
-- `gen.py` — AI-driven texture generation (motion prompts → ComfyUI sprite sheets)
+- `gen.py` — AI-driven texture generation (`generate_animated_sticker()`: ComfyUI AnimateDiff → rembg background removal → `pack_frames_to_sprite_sheet()`)
 - `export.py` — GIF/MP4 export with progress reporting
 
 Animations evaluate per-frame in `_evaluate_animations()`, merging animation-driven transforms with manual adjustments in `_render_frame()`.
+
+### Style presets (`app/utils/config_loader.py` + `app/ui/style_preset_manager_dialog.py`)
+
+Style presets bundle prompt templates with LoRA configurations. Built-in presets (marked `is_builtin_preset`) ship with the app; custom presets are user-defined. Functions: `build_styled_prompt()` wraps user text with the selected preset's prompt template; `add_preset()`/`update_preset()`/`delete_preset()`/`reset_preset()` manage the preset catalog. The `StylePresetManagerDialog` provides a two-pane Qt UI (preset list + editable fields).
 
 ## Key design patterns
 
@@ -152,6 +182,59 @@ Stickers are stored as PNG files in `assets/gallery/` with metadata in `index.js
 ### Chinese path handling
 OpenCV's `cv2.imread()` does not support Unicode/Chinese paths on Windows. Always use `np.fromfile(path, dtype=np.uint8)` + `cv2.imdecode(raw, cv2.IMREAD_UNCHANGED)` to load images from disk. `load_rgba_sticker()` in `image_proc.py` uses this pattern. Keep PNG filenames ASCII — Chinese text in prompts can leak into generated filenames via ComfyUI.
 
+### Config management (`app/utils/config_loader.py`)
+`get_config()` returns the canonical config dict (cached after first load). `save_config()` does a deep-merge against the current config — it never writes `config.json` if values haven't changed, and strips Python dicts from values to keep the JSON portable. The `_deep_merge()` helper recurses on dicts only; non-dict values (lists, scalars) are replaced wholesale.
+
 ## Debugging
 
-Unit tests alone are insufficient — 22 passing tests have still missed runtime bugs (Chinese path encoding, silent error drops, aggressive auto-clear). When fixing a runtime bug, verify the fix by launching the actual application and exercising the workflow end-to-end. Check console output for warnings or errors that tests don't catch. Use `python app/main.py --mock` for faster UI-only iteration without ComfyUI.
+Unit tests alone are insufficient — 278 passing tests can still miss runtime bugs (Chinese path encoding, silent error drops, aggressive auto-clear). When fixing a runtime bug, verify the fix by launching the actual application and exercising the workflow end-to-end. Check console output for warnings or errors that tests don't catch. Use `python app/main.py --mock` for faster UI-only iteration without ComfyUI.
+
+## Project structure
+
+```
+FaceDoodle/
+├── app/
+│   ├── main.py                      # Entry point, process & queue initialization
+│   ├── ai/
+│   │   ├── agent.py                 # DeepSeek multi-turn conversation parser
+│   │   ├── generator.py             # ComfyUI API client (WebSocket + polling)
+│   │   ├── comfy_manager.py         # ComfyUI subprocess lifecycle management
+│   │   └── workflows/               # ComfyUI workflow JSON templates (×4)
+│   ├── core/
+│   │   ├── animation/               # Animation system (clip/engine/texture/gen/export)
+│   │   ├── brush.py                 # Brush engine (PNG tip stamping)
+│   │   ├── face_mesh.py             # MediaPipe 468-landmark detection
+│   │   ├── face_draw.py             # Face drawing canvas + coordinate mapping
+│   │   ├── protocol.py              # All queue message typed dataclass definitions
+│   │   ├── renderer.py              # Sticker perspective compositing + face mesh
+│   │   ├── templates.py             # Built-in template sticker generation
+│   │   ├── tracker.py               # Consumer main loop, AI scheduling & render orchestration
+│   │   ├── tracker_stickers.py      # StickerManager mixin (CRUD operations)
+│   │   └── tracker_animation.py     # AnimationProcessor mixin (animation queue dispatch)
+│   ├── ui/
+│   │   ├── main_window.py           # Main window + event handling + gallery management
+│   │   ├── chat_panel.py            # Chat message bubble panel
+│   │   ├── widgets.py               # Reusable widgets (gallery cards, canvas, buttons)
+│   │   ├── sticker_panel.py         # Sticker panel components
+│   │   ├── drawing_widgets.py       # Drawing-related widgets
+│   │   ├── animation_timeline.py    # Animation timeline panel
+│   │   ├── animation_gen_dialog.py  # Animation generation dialog
+│   │   ├── style_preset_manager_dialog.py  # Style preset create/edit/delete dialog
+│   │   └── theme.py                 # Theme palette & fonts
+│   └── utils/
+│       ├── config_loader.py         # Config loading, style presets, prompt building
+│       ├── image_proc.py            # Image loading & preprocessing
+│       ├── storage.py               # Sticker persistence (UUID filenames, index.json)
+│       └── logging_config.py        # Centralized multi-process logging setup
+├── assets/
+│   ├── brushes/                     # Brush tip PNGs + brushes.json config
+│   ├── templates/                   # Built-in templates (auto-generated)
+│   └── gallery/                     # User stickers (PNG + index.json)
+├── tests/                           # pytest suite (278 tests across 12 files)
+├── scripts/
+│   └── check_syntax.py              # Pre-commit syntax check script
+├── config.json                      # Application configuration
+├── requirements.txt
+├── .pre-commit-config.yaml
+└── README.md
+```

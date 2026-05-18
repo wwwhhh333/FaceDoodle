@@ -8,7 +8,8 @@ from app.core.animation import (
 )
 from app.core.protocol import (
     AnimPlay, AnimPause, AnimStop, AnimSetClip,
-    AnimAddKeyframe, AnimRemoveKeyframe, AnimSetLoop, AnimSeek, AnimExport,
+    AnimAddKeyframe, AnimRemoveKeyframe, AnimUpdateKeyframe,
+    AnimSetLoop, AnimSeek, AnimExport,
     AnimGenTexture, AnimClipUpdated, AnimExportProgress, AnimGenProgress,
 )
 from app.utils import storage
@@ -47,6 +48,8 @@ class AnimationProcessor:
                 self._handle_add_keyframe(msg)
             elif isinstance(msg, AnimRemoveKeyframe):
                 self._handle_remove_keyframe(msg)
+            elif isinstance(msg, AnimUpdateKeyframe):
+                self._handle_update_keyframe(msg)
             elif isinstance(msg, AnimSetLoop):
                 self.anim_engine.set_loop(msg.instance_id, msg.loop)
             elif isinstance(msg, AnimSeek):
@@ -119,6 +122,26 @@ class AnimationProcessor:
         clip.remove_keyframe(msg.keyframe_index)
         self.display_queue.put(AnimClipUpdated(clip_data=clip.to_dict()))
 
+    def _handle_update_keyframe(self, msg):
+        clip = self.anim_engine.get_bound_clip(msg.instance_id)
+        if clip is None or msg.keyframe_index < 0:
+            return
+        if msg.keyframe_index >= len(clip.keyframes):
+            return
+        kf = clip.keyframes[msg.keyframe_index]
+        time_changed = kf.time != msg.time
+        kf.time = msg.time
+        kf.offset_x = msg.offset_x
+        kf.offset_y = msg.offset_y
+        kf.rotation = msg.rotation
+        kf.scale_mult = msg.scale_mult
+        kf.opacity = msg.opacity
+        kf.easing = msg.easing
+        if time_changed:
+            clip.keyframes.sort(key=lambda k: k.time)
+            clip._recalc_duration()
+        self.display_queue.put(AnimClipUpdated(clip_data=clip.to_dict()))
+
     def _evaluate_animations(self):
         for instance in self.active_stickers:
             iid = instance["instance_id"]
@@ -148,17 +171,28 @@ class AnimationProcessor:
         if face_data is None:
             return
 
+        # Snapshot absolute adjustments before spawning thread.
+        # If in delta mode (animation playing), convert delta → absolute
+        # so the export uses stable, correct values regardless of timing.
+        iid = instance["instance_id"]
+        raw = self.adjustments.get(iid, {})
+        manual_adj = dict(raw)
+        if iid in self._adj_is_delta:
+            anim = self._anim_evaluations.get(iid, {})
+            manual_adj["offset_x"] = raw.get("offset_x", 0.0) + anim.get("offset_x", 0.0)
+            manual_adj["offset_y"] = raw.get("offset_y", 0.0) + anim.get("offset_y", 0.0)
+            manual_adj["rotation"] = raw.get("rotation", 0.0) + anim.get("rotation", 0.0)
+            manual_adj["scale_mult"] = raw.get("scale_mult", 1.0) * anim.get("scale_mult", 1.0)
+
         threading.Thread(
             target=self._run_export,
-            args=(clip, instance, face_data, fmt, fps, output_path),
+            args=(clip, instance, face_data, fmt, fps, output_path, manual_adj),
             daemon=True,
         ).start()
 
-    def _run_export(self, clip, instance, face_data, fmt, fps, output_path):
+    def _run_export(self, clip, instance, face_data, fmt, fps, output_path, manual_adj):
         try:
             from app.core.animation.export import export_animation
-            instance_id = instance["instance_id"]
-            manual_adj = self.adjustments.get(instance_id)
             export_animation(
                 clip, instance["sticker"], fps, output_path, face_data,
                 instance["location"], instance["scale"],

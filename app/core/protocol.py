@@ -69,6 +69,7 @@ class Anim:
     SET_CLIP        = "anim_set_clip"
     ADD_KEYFRAME    = "anim_add_keyframe"
     REMOVE_KEYFRAME = "anim_remove_keyframe"
+    UPDATE_KEYFRAME = "anim_update_keyframe"
     SET_LOOP        = "anim_set_loop"
     SEEK            = "anim_seek"
     EXPORT          = "anim_export"
@@ -290,6 +291,20 @@ class AnimRemoveKeyframe:
 
 
 @dataclass
+class AnimUpdateKeyframe:
+    action: str = Anim.UPDATE_KEYFRAME
+    instance_id: str = ""
+    keyframe_index: int = 0
+    time: float = 0.0
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    rotation: float = 0.0
+    scale_mult: float = 1.0
+    opacity: float = 1.0
+    easing: str = "linear"
+
+
+@dataclass
 class AnimSetLoop:
     action: str = Anim.SET_LOOP
     instance_id: str = ""
@@ -322,8 +337,8 @@ class AnimGenTexture:
 
 
 AnimationMsg = (AnimPlay | AnimPause | AnimStop | AnimSetClip
-                | AnimAddKeyframe | AnimRemoveKeyframe | AnimSetLoop
-                | AnimSeek | AnimExport | AnimGenTexture)
+                | AnimAddKeyframe | AnimRemoveKeyframe | AnimUpdateKeyframe
+                | AnimSetLoop | AnimSeek | AnimExport | AnimGenTexture)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

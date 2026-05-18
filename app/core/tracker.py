@@ -97,7 +97,7 @@ def _handle_img2img(cmd, result_queue, mock, gen_state):
                 roi = canvas[y_off:y_off + new_h, x_off:x_off + new_w]
                 blended = (rgb * alpha + roi * (1 - alpha)).astype(np.uint8)
                 canvas[y_off:y_off + new_h, x_off:x_off + new_w] = blended
-                preprocessed_path = os.path.join(os.path.dirname(image_path), "preprocessed_for_controlnet.png")
+                preprocessed_path = os.path.join(os.path.dirname(image_path), "preprocessed_for_img2img.png")
                 cv2.imwrite(preprocessed_path, canvas)
                 image_path = preprocessed_path
 

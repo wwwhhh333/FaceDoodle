@@ -32,7 +32,7 @@
   "4": {
     "inputs": {
       "text": "cat ears gently fluttering in the breeze",
-      "clip": ["1", 1]
+      "clip": ["14", 1]
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
@@ -42,7 +42,7 @@
   "5": {
     "inputs": {
       "text": "photo, realistic, 3D render, shadow, blur, noisy edges, text, watermark, low quality, jpeg artifacts, distortion, deformed",
-      "clip": ["1", 1]
+      "clip": ["14", 1]
     },
     "class_type": "CLIPTextEncode",
     "_meta": {
@@ -81,7 +81,7 @@
       "ipadapter": ["7", 0],
       "clip_vision": ["8", 0],
       "image": ["6", 0],
-      "model": ["1", 0],
+      "model": ["14", 0],
       "weight": 0.7,
       "noise": 0.3,
       "weight_type": "linear",
@@ -142,6 +142,19 @@
     "class_type": "SaveImage",
     "_meta": {
       "title": "Save Animated Frames"
+    }
+  },
+  "14": {
+    "inputs": {
+      "model": ["1", 0],
+      "clip": ["1", 1],
+      "lora_name": "",
+      "strength_model": 0.8,
+      "strength_clip": 0.8
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Load LoRA"
     }
   }
 }

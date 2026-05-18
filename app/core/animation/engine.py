@@ -76,6 +76,7 @@ class AnimationEngine:
             clip = self.get_bound_clip(instance_id)
             if clip:
                 pb["time"] = max(0.0, min(t, clip.duration))
+            pb["last_tick"] = time.perf_counter()
 
     # ── per-frame ──
 

@@ -1,5 +1,6 @@
 """Orchestrate AI texture animation generation: ComfyUI → rembg → sprite sheet."""
 
+import logging
 import os
 import tempfile
 
@@ -8,6 +9,8 @@ import numpy as np
 
 from app.core.animation.texture import pack_frames_to_sprite_sheet
 from app.utils.config_loader import build_positive_prompt
+
+log = logging.getLogger(__name__)
 
 
 def _preprocess_sticker(sticker_bgra, canvas_size=1024):
@@ -45,7 +48,7 @@ def _remove_background(frame_bgr):
             rgba = np.concatenate([rgba, alpha], axis=2)
         return rgba
     except ImportError:
-        # If rembg is not installed, return opaque RGBA
+        log.warning("rembg 未安装，动画帧将没有透明背景")
         h, w = frame_bgr.shape[:2]
         alpha = np.ones((h, w, 1), dtype=np.uint8) * 255
         if frame_bgr.shape[2] == 4:
@@ -78,20 +81,21 @@ def generate_animated_sticker(sticker_bgra, client, motion_prompt,
     # 2. Call ComfyUI AnimateDiff
     if progress_callback:
         progress_callback(0.1)
-    frame_paths = client.generate_animated_frames(
-        prompt_text=build_positive_prompt(motion_prompt),
-        workflow_name="animatediff_workflow_api.json",
-        input_image_path=preprocessed_path,
-        frame_count=frame_count,
-        fps=fps,
-        seed=seed,
-    )
-
-    # Clean up temp file
     try:
-        os.unlink(preprocessed_path)
-    except OSError:
-        pass
+        frame_paths = client.generate_animated_frames(
+            prompt_text=build_positive_prompt(motion_prompt),
+            workflow_name="animatediff_workflow_api.json",
+            input_image_path=preprocessed_path,
+            frame_count=frame_count,
+            fps=fps,
+            seed=seed,
+        )
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(preprocessed_path)
+        except OSError:
+            pass
 
     if not frame_paths:
         if progress_callback:

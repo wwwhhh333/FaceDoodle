@@ -58,6 +58,7 @@ class ComfyUIManager:
         self.install_path = install_path
         self.server_address = server_address
         self._process = None
+        self._log_file = None
 
     @property
     def enabled(self):
@@ -76,15 +77,21 @@ class ComfyUIManager:
         executable, args, cwd = launch
         cmd = [executable] + args
         log.info("启动 ComfyUI: %s", ' '.join(cmd))
+        log_dir = "assets/temp"
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "comfyui_startup.log")
+        self._log_file = open(log_path, "a")
+        log.info("ComfyUI 日志输出到 %s", log_path)
         try:
             self._process = subprocess.Popen(
                 cmd,
                 cwd=cwd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
             )
         except OSError as e:
             log.error("ComfyUI 启动失败: %s", e)
+            self._log_file.close()
             return False
 
         log.info("等待 ComfyUI 就绪...")
@@ -104,3 +111,6 @@ class ComfyUIManager:
             except subprocess.TimeoutExpired:
                 self._process.kill()
             log.info("ComfyUI 已关闭")
+        if self._log_file:
+            self._log_file.close()
+            self._log_file = None
