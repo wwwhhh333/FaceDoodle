@@ -15,8 +15,6 @@ from app.utils.config_loader import build_negative_prompt
 
 log = logging.getLogger(__name__)
 
-_ws_fail_time = 0          # epoch of last WebSocket failure; 0 = never failed
-_WS_COOLDOWN = 120          # seconds before re-attempting WebSocket
 
 TEMP_MAX_FILES = 50
 
@@ -268,8 +266,9 @@ class ComfyClient:
         return res["prompt_id"]
 
     def _inject_workflow(self, workflow, prompt_text, negative_prompt=None,
-                         input_image_path=None, seed=None, filename_prefix=None):
-        """Inject prompt, LoRA, image, filename, and seed into a loaded workflow dict.
+                         input_image_path=None, seed=None, filename_prefix=None,
+                         controlnet_strength=None, denoise=None):
+        """Inject prompt, LoRA, image, filename, seed, and optional overrides into a workflow.
 
         Modifies *workflow* in place.  Returns the workflow for chaining.
         """
@@ -299,6 +298,10 @@ class ComfyClient:
                 node.setdefault("inputs", {})["seed"] = (
                     seed if seed is not None else uuid.uuid4().int & ((1 << 63) - 1)
                 )
+                if denoise is not None:
+                    node["inputs"]["denoise"] = denoise
+            elif ct == "ControlNetApply" and controlnet_strength is not None:
+                node["inputs"]["strength"] = controlnet_strength
             elif ct == "LoadImage" and need_image and uploaded_name:
                 node["inputs"]["image"] = uploaded_name
                 need_image = False  # Only set the first LoadImage
@@ -322,7 +325,8 @@ class ComfyClient:
     # ── submission ──
 
     def _submit_workflow(self, prompt_text, workflow_name, negative_prompt=None,
-                          input_image_path=None, seed=None):
+                          input_image_path=None, seed=None,
+                          controlnet_strength=None, denoise=None):
         """Load workflow, inject prompt/LoRA/seed/image, submit, return (workflow, prompt_id)."""
         workflow_path = os.path.join(os.path.dirname(__file__), "workflows", workflow_name)
         with open(workflow_path, 'r', encoding='utf-8') as f:
@@ -331,169 +335,16 @@ class ComfyClient:
         self._inject_workflow(workflow, prompt_text,
                               negative_prompt=negative_prompt,
                               input_image_path=input_image_path,
-                              seed=seed)
+                              seed=seed,
+                              controlnet_strength=controlnet_strength,
+                              denoise=denoise)
         prompt_id = self._post_prompt(workflow)
         return workflow, prompt_id
 
-    # ── generation (WebSocket + polling) ──
+    # ── generation (polling) ──
 
-    def _ws_in_cooldown(self):
-        global _ws_fail_time
-        if _ws_fail_time == 0:
-            return False
-        if time.time() - _ws_fail_time > _WS_COOLDOWN:
-            _ws_fail_time = 0
-            return False
-        return True
-
-    @staticmethod
-    def _ws_try_import():
-        try:
-            from websockets.sync.client import connect as ws_connect
-            return ws_connect
-        except ImportError:
-            return None
-
-    def _fallback_to_polling(self, reason, prompt_text, workflow_name,
-                              negative_prompt, timeout, input_image_path, seed,
-                              set_cooldown=False):
-        """Fall back to polling after a WebSocket failure."""
-        global _ws_fail_time
-        if set_cooldown:
-            _ws_fail_time = time.time()
-        log.warning("%s，回退到轮询模式", reason)
-        return self.generate_sync(prompt_text, workflow_name,
-                                   negative_prompt=negative_prompt,
-                                   timeout=timeout,
-                                   input_image_path=input_image_path,
-                                   seed=seed)
-
-    def generate_sync_ws(self, prompt_text, workflow_name, negative_prompt=None,
-                          timeout=None, input_image_path=None, seed=None,
-                          progress_callback=None):
-        """WebSocket-based generation with real-time step progress.
-
-        Falls back to polling ``generate_sync()`` when the ``websockets``
-        package is unavailable, or after a transient WebSocket error (with
-        a cooldown before re-attempting).
-        """
-        if self._ws_in_cooldown():
-            return self._fallback_to_polling(
-                "WebSocket 冷却中", prompt_text, workflow_name,
-                negative_prompt, timeout, input_image_path, seed)
-
-        ws_connect = self._ws_try_import()
-        if ws_connect is None:
-            return self._fallback_to_polling(
-                "websockets 未安装", prompt_text, workflow_name,
-                negative_prompt, timeout, input_image_path, seed,
-                set_cooldown=True)
-
-        if timeout is None:
-            timeout = self._cfg.get("comfyui", {}).get("generate_timeout", 120)
-
-        ws_url = f"ws://{self.server_address}/ws?clientId={uuid.uuid4().hex}"
-        result_path = None
-        result_score = 99
-        start_time = time.time()
-
-        try:
-            ws = ws_connect(ws_url, timeout=timeout)
-        except Exception as e:
-            return self._fallback_to_polling(
-                f"WebSocket 连接失败: {e}", prompt_text, workflow_name,
-                negative_prompt, timeout, input_image_path, seed)
-
-        # Submit prompt AFTER WS connects, so no execution events are missed
-        try:
-            workflow, prompt_id = self._submit_workflow(
-                prompt_text, workflow_name,
-                negative_prompt=negative_prompt,
-                input_image_path=input_image_path,
-                seed=seed,
-            )
-        except Exception as e:
-            ws.close()
-            return self._fallback_to_polling(
-                f"WebSocket 提交失败: {e}", prompt_text, workflow_name,
-                negative_prompt, timeout, input_image_path, seed,
-                set_cooldown=True)
-
-        previous_temp_files = self._snapshot_temp_files()
-
-        try:
-            ws.socket.settimeout(timeout)
-            while time.time() - start_time < timeout:
-                try:
-                    message = json.loads(ws.recv())
-                except TimeoutError:
-                    continue
-                msg_type = message.get("type")
-                data = message.get("data", {})
-
-                if data.get("prompt_id") != prompt_id:
-                    continue
-
-                if msg_type == "progress" and progress_callback:
-                    progress_callback(data.get("value", 0), data.get("max", 1))
-
-                elif msg_type == "executed":
-                    node_id = data.get("node", "")
-                    node_output = data.get("output", {})
-                    if "images" in node_output:
-                        score = self._score_output_node(node_id, workflow)
-                        for image_info in node_output["images"]:
-                            path = self._extract_image(image_info, prompt_id)
-                            if path and score < result_score:
-                                result_path = path
-                                result_score = score
-                                break
-
-                elif msg_type == "execution_cached":
-                    nodes = data.get("nodes", [])
-                    if nodes:
-                        log.debug("ComfyUI 缓存命中: %d 个节点", len(nodes))
-
-                elif msg_type == "executing":
-                    if data.get("node") is None:
-                        break  # prompt complete (node=None = all done)
-                elif msg_type in ("execution_success", "execution_complete"):
-                    break
-
-                elif msg_type == "execution_error":
-                    raise RuntimeError(
-                        f"ComfyUI 执行错误: {data.get('node_id')} "
-                        f"-- {data.get('exception_message', '')}"
-                    )
-
-        except Exception as e:
-            return self._fallback_to_polling(
-                f"WebSocket 异常: {e}", prompt_text, workflow_name,
-                negative_prompt, timeout, input_image_path, seed,
-                set_cooldown=True)
-        finally:
-            ws.close()
-
-        if not result_path:
-            log.info("WebSocket 完成，但未捕获到结果，尝试本地文件和回退...")
-            fallback = self._find_new_temp_file(previous_temp_files)
-            if fallback:
-                log.info("WebSocket 未捕获结果，使用本地缓存文件: %s", fallback)
-                return fallback
-            log.info("WebSocket 未捕获结果，回退轮询")
-            return self.generate_sync(prompt_text, workflow_name,
-                                       negative_prompt=negative_prompt,
-                                       timeout=max(5, timeout - (time.time() - start_time)),
-                                       input_image_path=input_image_path,
-                                       seed=seed)
-
-        if result_path:
-            log.info("WebSocket 成功捕获结果: %s", result_path)
-        else:
-            log.info("WebSocket 完成，未获取到结果")
-        return result_path
-
-    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None, input_image_path=None, seed=None):
+    def generate_sync(self, prompt_text, workflow_name, negative_prompt=None, timeout=None, input_image_path=None, seed=None,
+                        controlnet_strength=None, denoise=None):
         """
         同步生成逻辑：提交任务 -> 轮询状态 -> 返回结果路径
         """
@@ -505,6 +356,8 @@ class ComfyClient:
             negative_prompt=negative_prompt,
             input_image_path=input_image_path,
             seed=seed,
+            controlnet_strength=controlnet_strength,
+            denoise=denoise,
         )
 
         previous_temp_files = self._snapshot_temp_files()

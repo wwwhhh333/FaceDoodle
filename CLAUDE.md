@@ -118,14 +118,10 @@ Conversation state lives in `ConsumerProcessor.conversation_history` (list of `{
 
 ### ComfyUI client (`app/ai/generator.py`)
 
-`ComfyClient` wraps the ComfyUI REST API. Supports two generation paths:
-
-- **WebSocket** (`generate_sync_ws`): Real-time step progress via the `websockets` package. Falls back to polling on transient errors, with a 120s cooldown between retry attempts (module-level `_ws_fail_time` / `_WS_COOLDOWN`).
-- **Polling** (`generate_sync`): Submits workflow JSON via REST, polls `/api/queue` until completion.
+`ComfyClient` wraps the ComfyUI REST API. Submits workflow JSON via REST and polls `/api/queue` until completion.
 
 Workflow JSON files live in `app/ai/workflows/`:
 - `transparent_workflow_api.json` — SDXL + Layer Diffusion for transparent PNG stickers
-- `img2img_workflow_api.json` — img2img (sketch → sticker)
 - `img2img_controlnet_workflow_api.json` — img2img with ControlNet Scribble refinement
 - `animatediff_workflow_api.json` — AnimateDiff for sprite-sheet texture animation
 
@@ -197,9 +193,9 @@ FaceDoodle/
 │   ├── main.py                      # Entry point, process & queue initialization
 │   ├── ai/
 │   │   ├── agent.py                 # DeepSeek multi-turn conversation parser
-│   │   ├── generator.py             # ComfyUI API client (WebSocket + polling)
+│   │   ├── generator.py             # ComfyUI API client
 │   │   ├── comfy_manager.py         # ComfyUI subprocess lifecycle management
-│   │   └── workflows/               # ComfyUI workflow JSON templates (×4)
+│   │   └── workflows/               # ComfyUI workflow JSON templates (×3)
 │   ├── core/
 │   │   ├── animation/               # Animation system (clip/engine/texture/gen/export)
 │   │   ├── brush.py                 # Brush engine (PNG tip stamping)

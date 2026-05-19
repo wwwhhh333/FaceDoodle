@@ -81,9 +81,12 @@ def _handle_img2img(cmd, result_queue, mock, gen_state):
         image_path = cmd.image_path
         target_location = cmd.target_location
         scale = cmd.scale
+        controlnet_strength = cmd.controlnet_strength
+        denoise = cmd.denoise
 
         if image_path and os.path.exists(image_path):
-            raw = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+            raw = np.fromfile(image_path, dtype=np.uint8)
+            raw = cv2.imdecode(raw, cv2.IMREAD_UNCHANGED)
             if raw is not None and raw.shape[2] == 4:
                 canvas = np.ones((1024, 1024, 3), dtype=np.uint8) * 255
                 h, w = raw.shape[:2]
@@ -116,6 +119,8 @@ def _handle_img2img(cmd, result_queue, mock, gen_state):
                 prompt_text=prompt_text,
                 workflow_name="img2img_controlnet_workflow_api.json",
                 input_image_path=image_path,
+                denoise=denoise,
+                controlnet_strength=controlnet_strength,
             )
             if generated_path and os.path.exists(generated_path):
                 new_sticker = load_rgba_sticker(generated_path)

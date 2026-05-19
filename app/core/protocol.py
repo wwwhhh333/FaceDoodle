@@ -446,3 +446,5 @@ class CmdImg2Img:
     target_location: str = "forehead_top"
     scale: float = 1.0
     display_name: str = ""
+    controlnet_strength: float = 0.85
+    denoise: float = 1.0

@@ -584,6 +584,35 @@ class DrawingDialog(QDialog):
         refine_row.addWidget(self.refine_btn)
         bottom_layout.addLayout(refine_row)
 
+        # ── 精炼参数 ──
+        params_row = QHBoxLayout()
+        params_row.setSpacing(8)
+
+        params_row.addWidget(QLabel("ControlNet:"))
+        self.cn_slider = QSlider(Qt.Horizontal)
+        self.cn_slider.setRange(0, 100)
+        self.cn_slider.setValue(85)
+        self.cn_slider.setFixedWidth(100)
+        self.cn_slider.valueChanged.connect(self._on_cn_slider_changed)
+        params_row.addWidget(self.cn_slider)
+        self.cn_value_label = QLabel("0.85")
+        self.cn_value_label.setStyleSheet(f"color: {INK_MUTED_80}; {font_css('fine-print')}; min-width: 28px;")
+        params_row.addWidget(self.cn_value_label)
+
+        params_row.addWidget(QLabel("降噪:"))
+        self.denoise_slider = QSlider(Qt.Horizontal)
+        self.denoise_slider.setRange(5, 100)
+        self.denoise_slider.setValue(100)
+        self.denoise_slider.setFixedWidth(100)
+        self.denoise_slider.valueChanged.connect(self._on_denoise_slider_changed)
+        params_row.addWidget(self.denoise_slider)
+        self.denoise_value_label = QLabel("1.00")
+        self.denoise_value_label.setStyleSheet(f"color: {INK_MUTED_80}; {font_css('fine-print')}; min-width: 28px;")
+        params_row.addWidget(self.denoise_value_label)
+
+        params_row.addStretch()
+        bottom_layout.addLayout(params_row)
+
         apply_row = QHBoxLayout()
         apply_row.setSpacing(8)
         apply_row.addWidget(QLabel("位置:"))
@@ -634,6 +663,12 @@ class DrawingDialog(QDialog):
     def _on_scatter_changed(self, value):
         self.scatter_value_label.setText(str(value))
         self.canvas.set_scatter(float(value))
+
+    def _on_cn_slider_changed(self, value):
+        self.cn_value_label.setText(f"{value / 100:.2f}")
+
+    def _on_denoise_slider_changed(self, value):
+        self.denoise_value_label.setText(f"{value / 100:.2f}")
 
     def _toggle_mirror(self):
         on = self.canvas.toggle_mirror()
@@ -791,12 +826,16 @@ class DrawingDialog(QDialog):
         cv2.imwrite(temp_path, result)
         full_prompt = build_positive_prompt(refine_text)
         region = self.location_combo.currentData()
+        cn_strength = self.cn_slider.value() / 100.0
+        denoise = self.denoise_slider.value() / 100.0
         self.command_queue.put(CmdImg2Img(
             prompt_text=full_prompt,
             image_path=os.path.abspath(temp_path),
             target_location=region,
             scale=1.0,
             display_name=refine_text if refine_text else "简笔画精炼",
+            controlnet_strength=cn_strength,
+            denoise=denoise,
         ))
         self.refine_btn.setText("精炼中...")
         self.refine_btn.setEnabled(False)
