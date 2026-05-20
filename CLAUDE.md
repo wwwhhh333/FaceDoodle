@@ -28,7 +28,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_agent.py -v   # single file
 ```
 
-12 test files under `tests/` (278 test cases), pytest with fixtures in `conftest.py`. Tests cover agent, brush, config, templates, renderer, face_draw, storage, animation, protocol, and texture_anim. `test_agent.py` tests the keyword-fallback path (no API key needed).
+17 test files under `tests/` (401 test cases), pytest with fixtures in `conftest.py`. Tests cover agent, brush, config, templates, renderer, face_draw, storage, animation, protocol, and texture_anim. `test_agent.py` tests the keyword-fallback path (no API key needed).
 
 **After any code change**, run the full test suite. If the modified code has no test coverage, add tests before declaring the task complete. Passing unit tests do not guarantee correctness — runtime issues (Chinese path encoding, silent error drops, queue message handling) only surface when the app actually runs.
 
@@ -183,7 +183,7 @@ OpenCV's `cv2.imread()` does not support Unicode/Chinese paths on Windows. Alway
 
 ## Debugging
 
-Unit tests alone are insufficient — 278 passing tests can still miss runtime bugs (Chinese path encoding, silent error drops, aggressive auto-clear). When fixing a runtime bug, verify the fix by launching the actual application and exercising the workflow end-to-end. Check console output for warnings or errors that tests don't catch. Use `python app/main.py --mock` for faster UI-only iteration without ComfyUI.
+Unit tests alone are insufficient — 401 passing tests can still miss runtime bugs (Chinese path encoding, silent error drops, aggressive auto-clear). When fixing a runtime bug, verify the fix by launching the actual application and exercising the workflow end-to-end. Check console output for warnings or errors that tests don't catch. Use `python app/main.py --mock` for faster UI-only iteration without ComfyUI.
 
 ## Project structure
 
@@ -226,7 +226,7 @@ FaceDoodle/
 │   ├── brushes/                     # Brush tip PNGs + brushes.json config
 │   ├── templates/                   # Built-in templates (auto-generated)
 │   └── gallery/                     # User stickers (PNG + index.json)
-├── tests/                           # pytest suite (278 tests across 12 files)
+├── tests/                           # pytest suite (401 tests across 17 files)
 ├── scripts/
 │   └── check_syntax.py              # Pre-commit syntax check script
 ├── config.json                      # Application configuration

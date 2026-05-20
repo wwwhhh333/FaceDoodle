@@ -157,7 +157,7 @@ python app/main.py --video test_data/face_test.mp4 --mock
 ## 测试与代码质量
 
 ```bash
-# 运行全量测试（253 个）
+# 运行全量测试（401 个）
 python -m pytest tests/ -v
 
 # 单文件
@@ -236,7 +236,7 @@ FaceDoodle/
 │   └── gallery/                 # 用户贴纸
 ├── scripts/
 │   └── check_syntax.py          # Pre-commit 语法检查脚本
-├── tests/                       # pytest 测试套件（253 个用例）
+├── tests/                       # pytest 测试套件（401 个用例）
 ├── config.json                  # 应用配置
 ├── requirements.txt              # Python 依赖
 ├── .pre-commit-config.yaml      # Git 提交前验证关卡

@@ -1,3 +1,5 @@
+import json
+import os
 import numpy as np
 import pytest
 
@@ -72,3 +74,66 @@ def sample_rgba_sticker():
     cv2 = pytest.importorskip("cv2")
     cv2.circle(s, (25, 30), 20, (0, 0, 255, 255), -1)
     return s
+
+
+@pytest.fixture
+def mock_workflow_json(tmp_path):
+    """Create a minimal ComfyUI workflow JSON for generator tests."""
+    workflow = {
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "model.safetensors"},
+            "_meta": {"title": "Load Checkpoint"},
+        },
+        "2": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": ""},
+            "_meta": {"title": "CLIP Text Encode (Prompt)"},
+        },
+        "3": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": ""},
+            "_meta": {"title": "CLIP Text Encode (Negative)"},
+        },
+        "4": {
+            "class_type": "KSampler",
+            "inputs": {"seed": 0, "steps": 20, "cfg": 7.0, "denoise": 1.0},
+            "_meta": {"title": "KSampler"},
+        },
+        "5": {
+            "class_type": "SaveImage",
+            "inputs": {"filename_prefix": "ComfyUI"},
+            "_meta": {"title": "Save Image"},
+        },
+        "6": {
+            "class_type": "JoinImageWithAlpha",
+            "inputs": {"images": ["5", 0]},
+            "_meta": {"title": "Join Image with Alpha"},
+        },
+    }
+    path = tmp_path / "test_workflow.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(workflow, f)
+    return path
+
+
+@pytest.fixture
+def sample_sticker_metadata():
+    """Standard sticker metadata dict as returned by storage.get_sticker()."""
+    return {
+        "prompt": "test sticker",
+        "region": "forehead_top",
+        "scale": 1.0,
+        "is_animated": False,
+    }
+
+
+@pytest.fixture
+def mock_storage(tmp_path, monkeypatch):
+    """Redirect storage paths to tmp_path and provide a minimal gallery."""
+    from app.utils import storage as storage_mod
+    gdir = tmp_path / "gallery"
+    gdir.mkdir()
+    monkeypatch.setattr(storage_mod, "GALLERY_DIR", str(gdir))
+    monkeypatch.setattr(storage_mod, "INDEX_PATH", str(gdir / "index.json"))
+    return tmp_path
