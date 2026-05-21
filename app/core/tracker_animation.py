@@ -61,27 +61,27 @@ class AnimationProcessor:
                     self._pending_texture_gen = msg
 
     def _adj_to_delta(self, iid):
-        adj = self.adjustments.get(iid)
+        adj = self.registry.get_adj(iid)
         anim = self._anim_evaluations.get(iid)
-        if adj is None or anim is None:
+        if anim is None:
             return
-        adj["offset_x"] -= anim["offset_x"]
-        adj["offset_y"] -= anim["offset_y"]
-        adj["rotation"] -= anim["rotation"]
+        adj.offset_x -= anim["offset_x"]
+        adj.offset_y -= anim["offset_y"]
+        adj.rotation -= anim["rotation"]
         if anim["scale_mult"] > 0.001:
-            adj["scale_mult"] /= anim["scale_mult"]
+            adj.scale_mult /= anim["scale_mult"]
         else:
-            adj["scale_mult"] = 1.0
+            adj.scale_mult = 1.0
 
     def _adj_to_absolute(self, iid):
-        adj = self.adjustments.get(iid)
+        adj = self.registry.get_adj(iid)
         anim = self._anim_evaluations.get(iid)
-        if adj is None or anim is None:
+        if anim is None:
             return
-        adj["offset_x"] += anim["offset_x"]
-        adj["offset_y"] += anim["offset_y"]
-        adj["rotation"] += anim["rotation"]
-        adj["scale_mult"] *= anim["scale_mult"]
+        adj.offset_x += anim["offset_x"]
+        adj.offset_y += anim["offset_y"]
+        adj.rotation += anim["rotation"]
+        adj.scale_mult *= anim["scale_mult"]
 
     def _handle_add_keyframe(self, msg):
         clip = self.anim_engine.get_bound_clip(msg.instance_id)
@@ -91,18 +91,18 @@ class AnimationProcessor:
             self.anim_engine.set_clip(msg.instance_id, cls.id)
             clip = cls
 
-        adj = self.adjustments.get(msg.instance_id, {})
+        adj = self.registry.get_adj(msg.instance_id)
         anim = self._anim_evaluations.get(msg.instance_id, {})
         if self.anim_engine.is_playing(msg.instance_id) and anim:
-            eff_ox = anim.get("offset_x", 0.0) + adj.get("offset_x", 0.0)
-            eff_oy = anim.get("offset_y", 0.0) + adj.get("offset_y", 0.0)
-            eff_rot = anim.get("rotation", 0.0) + adj.get("rotation", 0.0)
-            eff_sm = anim.get("scale_mult", 1.0) * adj.get("scale_mult", 1.0)
+            eff_ox = anim.get("offset_x", 0.0) + adj.offset_x
+            eff_oy = anim.get("offset_y", 0.0) + adj.offset_y
+            eff_rot = anim.get("rotation", 0.0) + adj.rotation
+            eff_sm = anim.get("scale_mult", 1.0) * adj.scale_mult
         else:
-            eff_ox = adj.get("offset_x", 0.0)
-            eff_oy = adj.get("offset_y", 0.0)
-            eff_rot = adj.get("rotation", 0.0)
-            eff_sm = adj.get("scale_mult", 1.0)
+            eff_ox = adj.offset_x
+            eff_oy = adj.offset_y
+            eff_rot = adj.rotation
+            eff_sm = adj.scale_mult
 
         kf = Keyframe(
             time=msg.time,
@@ -143,8 +143,8 @@ class AnimationProcessor:
         self.display_queue.put(AnimClipUpdated(clip_data=clip.to_dict()))
 
     def _evaluate_animations(self):
-        for instance in self.active_stickers:
-            iid = instance["instance_id"]
+        for instance in self.registry.all:
+            iid = instance.instance_id
             clip = self.anim_engine.get_bound_clip(iid)
             if clip is None:
                 continue
@@ -163,7 +163,7 @@ class AnimationProcessor:
         if clip is None:
             return
 
-        instance = next((s for s in self.active_stickers if s["instance_id"] == instance_id), None)
+        instance = self.registry.get(instance_id)
         if instance is None:
             return
 
@@ -172,17 +172,16 @@ class AnimationProcessor:
             return
 
         # Snapshot absolute adjustments before spawning thread.
-        # If in delta mode (animation playing), convert delta → absolute
-        # so the export uses stable, correct values regardless of timing.
-        iid = instance["instance_id"]
-        raw = self.adjustments.get(iid, {})
-        manual_adj = dict(raw)
+        iid = instance.instance_id
+        raw = self.registry.get_adj(iid)
+        manual_adj = {"offset_x": raw.offset_x, "offset_y": raw.offset_y,
+                       "rotation": raw.rotation, "scale_mult": raw.scale_mult}
         if iid in self._adj_is_delta:
             anim = self._anim_evaluations.get(iid, {})
-            manual_adj["offset_x"] = raw.get("offset_x", 0.0) + anim.get("offset_x", 0.0)
-            manual_adj["offset_y"] = raw.get("offset_y", 0.0) + anim.get("offset_y", 0.0)
-            manual_adj["rotation"] = raw.get("rotation", 0.0) + anim.get("rotation", 0.0)
-            manual_adj["scale_mult"] = raw.get("scale_mult", 1.0) * anim.get("scale_mult", 1.0)
+            manual_adj["offset_x"] = raw.offset_x + anim.get("offset_x", 0.0)
+            manual_adj["offset_y"] = raw.offset_y + anim.get("offset_y", 0.0)
+            manual_adj["rotation"] = raw.rotation + anim.get("rotation", 0.0)
+            manual_adj["scale_mult"] = raw.scale_mult * anim.get("scale_mult", 1.0)
 
         threading.Thread(
             target=self._run_export,
@@ -194,8 +193,8 @@ class AnimationProcessor:
         try:
             from app.core.animation.export import export_animation
             export_animation(
-                clip, instance["sticker"], fps, output_path, face_data,
-                instance["location"], instance["scale"],
+                clip, instance.sticker, fps, output_path, face_data,
+                instance.location, instance.scale,
                 progress_callback=lambda p: self.display_queue.put(
                     AnimExportProgress(progress=p, done=(p >= 1.0), output_path=output_path)),
                 format=fmt,

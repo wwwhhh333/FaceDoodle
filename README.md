@@ -83,7 +83,7 @@ Windows 下 OpenCV 不支持中文路径，PNG 文件名请用英文，笔刷名
 - **Producer**: 摄像头采集或视频文件读取，帧推送到 `frame_queue`（视频模式按 FPS 节流）
 - **Consumer**: MediaPipe 468 点面部检测 + 贴纸渲染 + AI 调度 + 动画引擎。Mixin 架构：`ConsumerProcessor(StickerManager, AnimationProcessor)`
 - **队列通信**: 7 个多进程队列 + 1 个内部 result_queue，所有消息使用 typed dataclass (`app/core/protocol.py`)
-- **UI**: PyQt5 界面，`VideoUpdateThread` 拉取 `display_queue` 帧和状态消息
+- **UI**: PySide6 界面（dark-first 现代主题），`VideoUpdateThread` 拉取 `display_queue` 帧和状态消息
 - **ComfyUI**: SDXL + Layer Diffusion 生成透明 PNG（工作流 API）
 
 ## 环境要求
@@ -98,7 +98,7 @@ Windows 下 OpenCV 不支持中文路径，PNG 文件名请用英文，笔刷名
 
 ### Python 依赖
 
-完整列表见 `requirements.txt`，核心依赖：`opencv-python` `mediapipe` `PyQt5` `openai` `aiohttp` `numpy`
+完整列表见 `requirements.txt`，核心依赖：`opencv-python` `mediapipe` `PySide6` `openai` `aiohttp` `numpy`
 
 ### ComfyUI 依赖
 

@@ -1,11 +1,11 @@
 """Animation timeline editor widget — keyframe track, property panel, export dialog."""
 
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QDoubleSpinBox, QComboBox, QDialog,
                              QFormLayout, QSpinBox, QLineEdit, QFileDialog,
                              QCheckBox)
-from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPolygonF
-from PyQt5.QtCore import Qt, QPointF, pyqtSignal
+from PySide6.QtGui import QPainter, QColor, QPen, QFont, QPolygonF
+from PySide6.QtCore import Qt, QPointF, Signal
 
 from app.core.protocol import (
     AnimPlay, AnimPause, AnimStop, AnimSetLoop, AnimSeek,
@@ -13,7 +13,7 @@ from app.core.protocol import (
 )
 from app.core.animation import EASING_FUNCTIONS
 from app.ui.theme import (PRIMARY, CANVAS, INK, SURFACE_TILE_1,
-                          font_css, ROUNDED, rgba)
+                          font_css, ROUNDED, rgba, transport_button_style)
 from app.ui.widgets import StyledButton
 
 EASING_OPTIONS = list(EASING_FUNCTIONS.keys())
@@ -27,10 +27,10 @@ TICK_HEIGHT = 8
 class TimeAxisTrack(QWidget):
     """Custom-painted timeline track with draggable keyframes and playhead."""
 
-    time_clicked = pyqtSignal(float)
-    keyframe_selected = pyqtSignal(int)   # index
-    keyframe_dragged = pyqtSignal(int, float)  # index, new_time
-    keyframe_deselected = pyqtSignal()
+    time_clicked = Signal(float)
+    keyframe_selected = Signal(int)   # index
+    keyframe_dragged = Signal(int, float)  # index, new_time
+    keyframe_deselected = Signal()
 
     def __init__(self):
         super().__init__()
@@ -119,7 +119,7 @@ class TimeAxisTrack(QWidget):
     # ── mouse ──
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             px = event.pos().x()
             py = event.pos().y()
             # Check keyframe hit
@@ -156,7 +156,7 @@ class TimeAxisTrack(QWidget):
         self.update()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._dragging = False
 
 
@@ -183,32 +183,24 @@ class AnimationTimeline(QWidget):
         # ── toolbar ──
         toolbar = QHBoxLayout()
 
-        transport_style = f"""
-            QPushButton {{
-                background: {rgba(INK, 0.08)}; color: {INK};
-                border: none; border-radius: {ROUNDED['sm']};
-                font-size: 16px; padding: 2px 0;
-            }}
-            QPushButton:hover {{ background: {rgba(INK, 0.15)}; }}
-            QPushButton:checked {{ background: {PRIMARY}; color: {CANVAS}; }}
-        """
+        _t_style = transport_button_style()
 
         self._play_btn = QPushButton("▶")
         self._play_btn.setFixedSize(32, 28)
-        self._play_btn.setStyleSheet(transport_style)
+        self._play_btn.setStyleSheet(_t_style)
         self._play_btn.clicked.connect(self._on_play)
         toolbar.addWidget(self._play_btn)
 
         self._stop_btn = QPushButton("⏹")
         self._stop_btn.setFixedSize(32, 28)
-        self._stop_btn.setStyleSheet(transport_style)
+        self._stop_btn.setStyleSheet(_t_style)
         self._stop_btn.clicked.connect(self._on_stop)
         toolbar.addWidget(self._stop_btn)
 
         self._loop_btn = QPushButton("🔁")
         self._loop_btn.setFixedSize(32, 28)
         self._loop_btn.setCheckable(True)
-        self._loop_btn.setStyleSheet(transport_style)
+        self._loop_btn.setStyleSheet(_t_style)
         self._loop_btn.clicked.connect(self._on_loop)
         toolbar.addWidget(self._loop_btn)
 
@@ -449,7 +441,7 @@ class AnimationTimeline(QWidget):
         if not self._instance_id:
             return
         dlg = ExportDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             fmt, fps, path = dlg.result()
             self._queue.put(AnimExport(
                 instance_id=self._instance_id,

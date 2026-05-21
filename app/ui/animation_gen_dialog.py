@@ -1,9 +1,9 @@
 """Dialog for submitting an AI texture animation generation request."""
 
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                               QPushButton, QLineEdit, QSpinBox, QLabel,
                               QProgressBar)
-from PyQt5.QtCore import Qt
+from PySide6.QtCore import Qt
 
 from app.utils.config_loader import get_config
 from app.ui.theme import (PRIMARY, INK_MUTED_48, INK_MUTED_80,

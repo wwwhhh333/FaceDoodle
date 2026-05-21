@@ -1,131 +1,183 @@
-"""FaceDoodle 设计系统 tokens。
+"""FaceDoodle design system — Bugatti / inspired by DESIGN.md.
 
-基于 DESIGN.md。所有交互元素使用单一主色调。无装饰渐变，无 chrome 阴影。
+Pure black canvas, white uppercase-spaced display, weight-400 throughout,
+transparent pill buttons, rect cards, no accent — adapted for Chinese reading.
 """
 
-# ── 色彩 ──────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Color palette — bugatti monochrome (DESIGN.md §2)
+# ══════════════════════════════════════════════════════════════════════════════
 
-# 品牌色 & 强调色
-PRIMARY = "#0066cc"            # 主色调 — 唯一的交互色
-PRIMARY_FOCUS = "#0071e3"      # 聚焦环色
-PRIMARY_ON_DARK = "#2997ff"    # 暗色表面上的链接色
+CANVAS         = "#ffffff"    # white — page floor
+SURFACE_SOFT   = "#f5f5f5"   # light gray — panels
+SURFACE_CARD   = "#ffffff"   # card surface
+SURFACE_NAV    = "#00796b"   # dark teal — top bar
+SURFACE_HOVER  = "#e0f2f1"   # very light teal — hover
+SURFACE_ELEVATED = "#fafafa" # elevated surface
 
-# 表面色
-CANVAS = "#ffffff"             # 纯白 — 主内容区
-PARCHMENT = "#f5f5f7"          # 米白 — 侧边栏、底部、备选卡片
-SURFACE_PEARL = "#fafafc"      # 近白 — 幽灵按钮填充
-SURFACE_TILE_1 = "#272729"     # 近黑 — 暗色卡片主色
-SURFACE_TILE_2 = "#2a2a2c"     # 近黑微亮
-SURFACE_TILE_3 = "#252527"     # 近黑微暗
-SURFACE_BLACK = "#000000"      # 纯黑 — 导航栏背景
-CHIP_TRANSLUCENT = "#d2d2d7"   # 半透明灰色芯片底色
+INK            = "#212121"   # primary text
+BODY           = "#757575"   # secondary text
+BODY_STRONG    = "#212121"   # emphasized body
+MUTED          = "#757575"   # captions
+MUTED_SOFT     = "#9e9e9e"  # fine print
 
-# 文字色
-INK = "#1d1d1f"                # 近黑 — 亮色表面上所有文字
-INK_MUTED_80 = "#333333"       # 柔和正文
-INK_MUTED_48 = "#7a7a7a"       # 禁用态 / 法律声明文字
-BODY_ON_DARK = "#ffffff"       # 暗色表面上的文字
-BODY_MUTED = "#cccccc"         # 暗色表面上的次要文字
+HAIRLINE       = "#BDBDBD"   # divider
+HAIRLINE_STRONG = "#9e9e9e"  # heavier divider
 
-# 分割线 & 边框
-DIVIDER_SOFT = "#f0f0f0"       # 幽灵按钮的柔和环
-HAIRLINE = "#e0e0e0"           # 1px 卡片边框
-HAIRLINE_TINT = "rgba(0, 0, 0, 0.08)"  # 半透明分割线
+ACCENT         = "#cddc39"   # yellow — accent
+ACCENT_HOVER   = "#fdd835"   # darker yellow
+ACCENT_MUTED   = "rgba(255, 235, 59, 0.15)"  # subtle yellow wash
 
-# 破坏性操作色（红色，保留给删除等操作）
-DESTRUCTIVE = "#e34b4b"
-DESTRUCTIVE_HOVER = "#f06060"
-ERROR = "#e53e3e"              # 错误消息文字
+PRIMARY        = "#009688"   # teal — main brand
+PRIMARY_HOVER  = "#00796b"   # dark teal
+PRIMARY_MUTED  = "rgba(0, 150, 136, 0.12)"  # subtle teal wash
+LIGHT_TEAL     = "#b2dfdb"   # light teal
 
-# ── 字体排版 ─────────────────────────────────────────────────────────────
-# QSS 近似的 SF Pro 层级。
-# Windows 上 system-ui 解析为 Segoe UI Variable；中文使用 PingFang SC。
-# Qt 不支持 letter-spacing 和精确 line-height，通过 padding 近似 line-height，
-# 忽略负 letter-spacing。
+LINK           = "#009688"   # teal for links
 
-FONT_STACK = ('"Segoe UI Variable", "PingFang SC", "Microsoft YaHei", '
-              'system-ui, -apple-system, sans-serif')
+WARNING        = "#d4a017"   # warning states
+SUCCESS        = "#5fa657"   # success states (rarely appears)
+ERROR_CRIMSON  = "#b53333"   # warm red — error states
 
-# Font tokens as (size_px, weight_str) tuples for building QSS
+# ── Legacy aliases ──
+TERRACOTTA     = PRIMARY
+CORAL          = ACCENT
+PRIMARY_FOCUS  = PRIMARY_HOVER
+PRIMARY_ON_DARK = LIGHT_TEAL
+DESTRUCTIVE    = ERROR_CRIMSON
+ERROR          = ERROR_CRIMSON
+PARCHMENT      = SURFACE_CARD
+IVORY          = SURFACE_CARD
+PURE_WHITE     = INK
+WARM_SAND      = SURFACE_CARD
+DARK_SURFACE   = SURFACE_CARD
+NEAR_BLACK     = INK
+CHARCOAL_WARM  = BODY
+OLIVE_GRAY     = MUTED
+STONE_GRAY     = MUTED_SOFT
+WARM_SILVER    = BODY_STRONG
+SURFACE_BLACK  = CANVAS
+SURFACE_TILE_1 = SURFACE_CARD
+CHIP_TRANSLUCENT = SURFACE_CARD
+BORDER_CREAM   = HAIRLINE
+BORDER_WARM    = HAIRLINE_STRONG
+RING_WARM      = HAIRLINE_STRONG
+RING_DEEP      = HAIRLINE_STRONG
+DIVIDER_SOFT   = HAIRLINE
+BORDER_DARK    = HAIRLINE
+FOCUS_BLUE     = INK
+INK_MUTED_48   = MUTED_SOFT
+INK_MUTED_80   = MUTED
+HAIRLINE_TINT  = HAIRLINE
+SURFACE_PEARL  = SURFACE_CARD
+BODY_ON_DARK   = BODY
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Typography — Bugatti trinity adapted for Chinese
+#
+# Bugatti uses: Display (uppercase, wide-tracking), Text Regular (serif body),
+# Monospace (buttons/captions/nav).  All at weight 400 — no bold anywhere.
+#
+# Chinese adaptation:
+# - Headlines use Source Han Sans SC (matching Bugatti Display's sans) at 400
+# - Body uses Source Han Serif SC (matching Bugatti Text Regular's serif)
+# - Line-height ≥ 1.60 for Chinese readability
+# - CJK doesn't use letter-spacing — negative tracking would compress kerning
+# ══════════════════════════════════════════════════════════════════════════════
+
+FONT_DISPLAY = ('"Source Han Sans SC", "Noto Sans SC", "PingFang SC", '
+                '"Segoe UI", -apple-system, sans-serif')
+FONT_SERIF   = ('"Source Han Serif SC", "Noto Serif SC", '
+                'Georgia, "SimSun", serif')
+FONT_MONO    = ('"JetBrains Mono", "Cascadia Mono", "IBM Plex Mono", '
+                'ui-monospace, "SF Mono", monospace')
+
+# (size, weight, line_height)
 TYPO = {
-    "hero":       ("56px", "600"),
-    "display-lg": ("40px", "600"),
-    "display-md": ("34px", "600"),
-    "lead":       ("28px", "400"),
-    "lead-airy":  ("24px", "300"),
-    "tagline":    ("21px", "600"),
-    "body-strong":("17px", "600"),
-    "body":       ("17px", "400"),
-    "caption-strong": ("14px", "600"),
-    "caption":    ("14px", "400"),
-    "button-large": ("18px", "300"),
-    "button":     ("17px", "400"),
-    "button-utility": ("14px", "400"),
-    "fine-print": ("12px", "400"),
-    "micro-legal":("10px", "400"),
-    "nav-link":   ("12px", "400"),
+    "hero":         ("48px", "600", 1.25),
+    "display":      ("36px", "600", 1.30),
+    "heading":      ("28px", "600", 1.35),
+    "title":        ("22px", "600", 1.35),
+    "lead":         ("18px", "500", 1.75),
+    "body":         ("16px", "400", 1.75),
+    "body-small":   ("15px", "400", 1.70),
+    "body-strong":  ("16px", "600", 1.70),
+    "caption":      ("14px", "500", 1.60),
+    "caption-strong": ("14px", "600", 1.55),
+    "label":        ("13px", "500", 1.50),
+    "fine-print":   ("12px", "400", 1.50),
+    "button":       ("15px", "600", 1.0),
+    "button-utility": ("13px", "500", 1.0),
+    "button-large": ("16px", "500", 1.0),
+    "nav-link":     ("13px", "500", 1.4),
+    "tagline":      ("16px", "600", 1.0),
 }
 
-
-# Precomputed font CSS fragments (no per-call dict lookup or f-string construction)
 _FONT_CSS = {}
-for _token, (_size, _weight) in TYPO.items():
-    _FONT_CSS[_token] = f"font-family: {FONT_STACK}; font-size: {_size}; font-weight: {_weight};"
+for _token, (_size, _weight, _lh) in TYPO.items():
+    _FONT_CSS[_token] = (f"font-family: {FONT_SERIF}; "
+                         f"font-size: {_size}; font-weight: {_weight};")
 
 
 def font_css(token, color=None):
-    """返回预计算的 QSS 字体片段，可选附带颜色。"""
     css = _FONT_CSS.get(token, _FONT_CSS["body"])
     if color:
         return f"{css} color: {color};"
     return css
 
 
+def serif_css(token, color=None):
+    _size, _weight, _lh = TYPO.get(token, TYPO["heading"])
+    css = (f"font-family: {FONT_SERIF}; "
+           f"font-size: {_size}; font-weight: {_weight};")
+    if color:
+        return f"{css} color: {color};"
+    return css
+
+
 def label_css(token, color=None):
-    """返回 QLabel 样式：字体 + 透明背景 + 无边框。"""
     css = _FONT_CSS.get(token, _FONT_CSS["body"])
     if color:
         return f"{css} color: {color}; background: transparent; border: none;"
     return f"{css} background: transparent; border: none;"
 
 
-# ── Spacing ──────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Spacing — 4px base (DESIGN.md §5)
+# ══════════════════════════════════════════════════════════════════════════════
 
 SPACE = {
-    "xxs": 4,
-    "xs": 8,
-    "sm": 12,
-    "md": 17,
-    "lg": 24,
-    "xl": 32,
-    "xxl": 48,
+    "xxs": 4, "xs": 8, "sm": 12, "md": 16, "lg": 24, "xl": 40, "xxl": 64,
     "section": 80,
 }
 
-# ── Rounded Corners ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Shapes — binary radius (DESIGN.md §5): 0px for everything, pill for buttons
+# ══════════════════════════════════════════════════════════════════════════════
 
 ROUNDED = {
-    "none": "0px",
-    "xs": "5px",
-    "sm": "8px",
-    "md": "11px",
-    "lg": "18px",
-    "pill": "9999px",
-    "full": "9999px",
+    "none":  "0px",
+    "xs":    "6px",
+    "sm":    "8px",
+    "md":    "12px",
+    "lg":    "16px",
+    "xl":    "20px",
+    "full":  "9999px",
+    "pill":  "9999px",
 }
 
-
-# ── Helpers ──────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Helpers
+# ══════════════════════════════════════════════════════════════════════════════
 
 _RGBA_CACHE = {}
 
 
 def rgba(hex_color, alpha):
-    """将 hex 颜色转为 rgba() 字符串。按 (hex, alpha) 缓存。"""
     a_rounded = round(alpha, 2)
     key = (hex_color, a_rounded)
     cached = _RGBA_CACHE.get(key)
-    if cached is not None:
+    if cached:
         return cached
     r = int(hex_color[1:3], 16)
     g = int(hex_color[3:5], 16)
@@ -135,315 +187,546 @@ def rgba(hex_color, alpha):
     return result
 
 
-def _no_border():
-    return "border: none;"
+# ══════════════════════════════════════════════════════════════════════════════
+# Global stylesheet — Bugatti monochrome
+# ══════════════════════════════════════════════════════════════════════════════
 
-
-# ── Global Stylesheet ────────────────────────────────────────────────────
-
-# Precomputed at module load to avoid recomputation on every call
 _GLOBAL_STYLESHEET = f"""
     QMainWindow {{
         background: {CANVAS};
     }}
     QWidget {{
-        font-family: {FONT_STACK};
+        font-family: {FONT_SERIF};
         color: {INK};
+        selection-background-color: {ACCENT_MUTED};
+        selection-color: {INK};
     }}
     QLabel {{
-        color: {INK};
+        color: {BODY};
         background: transparent;
         border: none;
     }}
+
+    QToolTip {{
+        background: {SURFACE_CARD};
+        color: {BODY};
+        border: 1px solid {HAIRLINE};
+        border-radius: {ROUNDED["none"]};
+        padding: 6px 10px;
+        {font_css("fine-print")}
+    }}
+
+    QMenu {{
+        background: {SURFACE_CARD};
+        border: 1px solid {HAIRLINE};
+        border-radius: {ROUNDED["none"]};
+        padding: 4px 0;
+    }}
+    QMenu::item {{
+        padding: 8px 24px 8px 16px;
+        {font_css("label")}
+    }}
+    QMenu::item:selected {{
+        background: {SURFACE_ELEVATED};
+        color: {INK};
+    }}
+    QMenu::separator {{
+        height: 1px;
+        background: {HAIRLINE};
+        margin: 4px 8px;
+    }}
+
+    /* ── Input fields — transparent, bottom border only ── */
     QLineEdit {{
-        background: {CANVAS};
+        background: {SURFACE_SOFT};
         color: {INK};
         border: 1px solid {HAIRLINE};
-        border-radius: {ROUNDED["pill"]};
-        padding: 12px 18px;
+        border-radius: {ROUNDED["none"]};
+        padding: 10px 16px;
         {font_css("body")}
     }}
     QLineEdit:focus {{
-        border-color: {PRIMARY};
+        border-color: {ACCENT};
+        border-width: 1.5px;
     }}
     QLineEdit:disabled {{
-        background: {DIVIDER_SOFT};
-        color: {INK_MUTED_48};
+        background: {SURFACE_CARD};
+        color: {MUTED};
     }}
-    QMessageBox {{
-        background: {CANVAS};
-    }}
-    QMessageBox QLabel {{
-        color: {INK};
-        {font_css("body")}
-    }}
-    QMessageBox QPushButton {{
-        background: {PRIMARY};
-        color: {CANVAS};
-        border: none;
-        border-radius: {ROUNDED["pill"]};
-        padding: 8px 24px;
-        {font_css("caption")}
-    }}
-    QMessageBox QPushButton:hover {{
-        background: {PRIMARY_FOCUS};
-    }}
-    QComboBox {{
-        background: {CANVAS};
+
+    /* ── Spin boxes ── */
+    QSpinBox, QDoubleSpinBox {{
+        background: {SURFACE_SOFT};
         color: {INK};
         border: 1px solid {HAIRLINE};
-        border-radius: {ROUNDED["sm"]};
-        padding: 4px 8px;
-        {font_css("caption")}
+        border-radius: {ROUNDED["none"]};
+        padding: 6px 10px;
+        {font_css("label")}
     }}
-    QComboBox:hover {{
-        border-color: {PRIMARY};
+    QSpinBox:focus, QDoubleSpinBox:focus {{
+        border-color: {ACCENT};
+        border-width: 1.5px;
+    }}
+    QSpinBox:disabled, QDoubleSpinBox:disabled {{
+        background: {SURFACE_CARD};
+        color: {MUTED};
+    }}
+    QSpinBox::up-button, QDoubleSpinBox::up-button {{
+        border: none;
+        border-left: 1px solid {HAIRLINE};
+    }}
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{
+        border: none;
+        border-left: 1px solid {HAIRLINE};
+    }}
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+        image: none;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-bottom: 5px solid {MUTED};
+        width: 0; height: 0;
+    }}
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+        image: none;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {MUTED};
+        width: 0; height: 0;
+    }}
+
+    /* ── ComboBox ── */
+    QComboBox {{
+        background: {SURFACE_SOFT};
+        color: {INK};
+        border: 1px solid {HAIRLINE};
+        border-radius: {ROUNDED["none"]};
+        padding: 6px 12px;
+        {font_css("label")}
+    }}
+    QComboBox:hover {{ border-color: {HAIRLINE_STRONG}; }}
+    QComboBox:on {{ border-color: {ACCENT}; }}
+    QComboBox:disabled {{
+        background: {SURFACE_CARD};
+        color: {MUTED};
+    }}
+    QComboBox::drop-down {{
+        border: none;
+        width: 24px;
+    }}
+    QComboBox::down-arrow {{
+        image: none;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {MUTED};
+        width: 0; height: 0;
+        margin-right: 4px;
     }}
     QComboBox QAbstractItemView {{
-        background: {CANVAS};
+        background: {SURFACE_CARD};
         color: {INK};
-        selection-background-color: {PRIMARY};
-        selection-color: {CANVAS};
+        selection-background-color: {SURFACE_ELEVATED};
+        selection-color: {INK};
         border: 1px solid {HAIRLINE};
+        border-radius: {ROUNDED["none"]};
+        padding: 2px 0;
+        outline: none;
     }}
+
+    /* ── Checkbox ── */
     QCheckBox {{
-        color: {INK};
-        {font_css("caption")}
-        spacing: 6px;
+        color: {BODY};
+        {font_css("label")}
+        spacing: 8px;
     }}
     QCheckBox::indicator {{
-        width: 18px;
-        height: 18px;
-        border: 1px solid {HAIRLINE};
-        border-radius: {ROUNDED["xs"]};
-        background: {CANVAS};
+        width: 18px; height: 18px;
+        border: 1.5px solid {HAIRLINE_STRONG};
+        border-radius: {ROUNDED["none"]};
+        background: {SURFACE_SOFT};
+    }}
+    QCheckBox::indicator:hover {{
+        border-color: {ACCENT};
     }}
     QCheckBox::indicator:checked {{
-        background: {PRIMARY};
-        border-color: {PRIMARY};
+        background: {ACCENT};
+        border-color: {ACCENT};
     }}
+    QCheckBox:disabled {{ color: {MUTED}; }}
+    QCheckBox::indicator:disabled {{
+        background: {SURFACE_CARD};
+        border-color: {HAIRLINE};
+    }}
+
+    /* ── Sliders ── */
     QSlider::groove:horizontal {{
         background: {HAIRLINE};
         height: 4px;
-        border-radius: 2px;
+        border-radius: {ROUNDED["none"]};
     }}
     QSlider::handle:horizontal {{
-        background: {PRIMARY};
-        width: 14px;
-        height: 14px;
-        margin: -5px 0;
-        border-radius: 7px;
+        background: {ACCENT};
+        width: 16px; height: 16px;
+        margin: -6px 0;
+        border-radius: 8px;
     }}
+    QSlider::handle:horizontal:hover {{
+        background: {ACCENT_HOVER};
+    }}
+
+    /* ── Progress bar ── */
+    QProgressBar {{
+        background: {HAIRLINE};
+        border: none;
+        border-radius: {ROUNDED["none"]};
+        height: 4px;
+        text-align: center;
+        color: {MUTED};
+        {font_css("fine-print")}
+    }}
+    QProgressBar::chunk {{
+        background: {ACCENT};
+        border-radius: {ROUNDED["xs"]};
+    }}
+
+    /* ── Scroll bars — minimal ── */
     QScrollBar:vertical {{
         background: transparent;
-        width: 8px;
+        width: 4px; margin: 0;
     }}
     QScrollBar::handle:vertical {{
-        background: {rgba(INK, 0.2)};
-        min-height: 30px;
-        border-radius: 4px;
+        background: {rgba(BODY, 0.18)};
+        min-height: 36px;
+        border-radius: {ROUNDED["none"]};
     }}
     QScrollBar::handle:vertical:hover {{
-        background: {rgba(INK, 0.35)};
+        background: {rgba(ACCENT, 0.50)};
     }}
-    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-        height: 0;
-    }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
     QScrollBar:horizontal {{
         background: transparent;
-        height: 8px;
+        height: 4px;
     }}
     QScrollBar::handle:horizontal {{
-        background: {rgba(INK, 0.2)};
-        min-width: 30px;
-        border-radius: 4px;
+        background: {rgba(BODY, 0.18)};
+        min-width: 36px;
+        border-radius: {ROUNDED["none"]};
     }}
     QScrollBar::handle:horizontal:hover {{
-        background: {rgba(INK, 0.35)};
+        background: {rgba(ACCENT, 0.50)};
     }}
-    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-        width: 0;
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+
+    QScrollArea {{ background: transparent; border: none; }}
+
+    /* ── Splitter handle — 1px hairline ── */
+    QSplitter::handle {{
+        background: {rgba(BODY, 0.08)};
+        border-radius: {ROUNDED["none"]};
+    }}
+    QSplitter::handle:hover {{
+        background: {rgba(ACCENT, 0.35)};
+    }}
+    QSplitter::handle:horizontal {{ width: 1px; }}
+    QSplitter::handle:vertical   {{ height: 1px; }}
+
+    /* ── Group box ── */
+    QGroupBox {{
+        {font_css("label")}
+        border: 1px solid {HAIRLINE};
+        border-radius: {ROUNDED["none"]};
+        margin-top: 16px;
+        padding: 16px 12px 12px 12px;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        left: 12px;
+        padding: 0 6px;
+        color: {BODY};
+    }}
+
+    /* ── List widget ── */
+    QListWidget {{
+        background: {SURFACE_SOFT};
+        border: 1px solid {HAIRLINE};
+        border-radius: {ROUNDED["none"]};
+        padding: 4px;
+        outline: none;
+        {font_css("label")}
+    }}
+    QListWidget::item {{
+        padding: 8px 12px;
+        border-radius: {ROUNDED["none"]};
+    }}
+    QListWidget::item:selected {{
+        background: {ACCENT_MUTED};
+        color: {ACCENT};
+    }}
+    QListWidget::item:hover {{
+        background: {SURFACE_HOVER};
+    }}
+
+    /* ── Dialogs ── */
+    QDialog {{
+        background: {SURFACE_SOFT};
+        border: 1px solid {HAIRLINE};
+        border-radius: {ROUNDED["none"]};
+    }}
+    QMessageBox {{
+        background: {SURFACE_CARD};
+        border-radius: {ROUNDED["none"]};
+    }}
+    QMessageBox QLabel {{
+        color: {BODY};
+        {font_css("body")}
+    }}
+    QMessageBox QPushButton {{
+        background: {ACCENT};
+        color: #ffffff;
+        border: none;
+        border-radius: {ROUNDED["pill"]};
+        padding: 8px 24px;
+        {font_css("button")}
+    }}
+    QMessageBox QPushButton:hover {{
+        background: {ACCENT_HOVER};
+    }}
+
+    /* ── Text edit ── */
+    QTextEdit, QPlainTextEdit {{
+        background: {SURFACE_SOFT};
+        color: {INK};
+        border: 1px solid {HAIRLINE};
+        border-radius: {ROUNDED["none"]};
+        padding: 8px 12px;
+        {font_css("body")}
+        selection-background-color: {ACCENT_MUTED};
+        selection-color: {INK};
+    }}
+    QTextEdit:focus, QPlainTextEdit:focus {{
+        border-color: {INK};
+        border-width: 1.5px;
     }}
 """
 
 
 def global_stylesheet():
-    """返回应用到主窗口的全局 QSS。"""
     return _GLOBAL_STYLESHEET
 
 
-# ── Button Styles ────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Button styles — transparent + outline only (DESIGN.md §4)
+# ══════════════════════════════════════════════════════════════════════════════
 
-def pill_button_style(color=PRIMARY, text_color=CANVAS):
-    """主要 pill CTA 按钮样式。"""
+_BTN_BASE = "QPushButton"
+
+
+def transport_button_style():
     return f"""
-        QPushButton {{
+        {_BTN_BASE} {{
+            background: transparent;
+            color: {BODY};
+            border: 1px solid {HAIRLINE};
+            border-radius: {ROUNDED["sm"]};
+            padding: 5px 11px;
+            min-width: 28px;
+            {font_css("button-utility")}
+        }}
+        {_BTN_BASE}:hover {{
+            background: {PRIMARY_MUTED};
+            border-color: {PRIMARY};
+        }}
+        {_BTN_BASE}:pressed {{
+            background: {rgba(PRIMARY, 0.22)};
+        }}
+        {_BTN_BASE}:checked {{
+            background: {PRIMARY};
+            color: #ffffff;
+            border-color: {PRIMARY};
+        }}
+        {_BTN_BASE}:disabled {{
+            color: {MUTED};
+            border-color: {HAIRLINE};
+        }}
+    """
+
+
+def pill_button_style(color=PRIMARY, text_color="#ffffff"):
+    """Primary CTA — teal filled, or custom color."""
+    return f"""
+        {_BTN_BASE} {{
             background: {color};
             color: {text_color};
             border: none;
-            border-radius: {ROUNDED["pill"]};
-            padding: 11px 22px;
-            {font_css("body")}
+            border-radius: {ROUNDED["sm"]};
+            padding: 11px 28px;
+            {font_css("button")}
         }}
-        QPushButton:hover {{
-            background: {PRIMARY_FOCUS};
-        }}
-        QPushButton:pressed {{
-            background: {color};
-        }}
-        QPushButton:disabled {{
-            background: {HAIRLINE};
-            color: {INK_MUTED_48};
+        {_BTN_BASE}:hover {{ background: {PRIMARY_HOVER}; }}
+        {_BTN_BASE}:pressed {{ background: {color}; }}
+        {_BTN_BASE}:disabled {{
+            background: {rgba(BODY, 0.20)};
+            color: {MUTED};
         }}
     """
 
 
 def ghost_pill_button_style(text_color=PRIMARY):
-    """Secondary pill — transparent bg, colored text, 1px colored border."""
     return f"""
-        QPushButton {{
+        {_BTN_BASE} {{
             background: transparent;
             color: {text_color};
-            border: 1px solid {text_color};
-            border-radius: {ROUNDED["pill"]};
-            padding: 10px 21px;
-            {font_css("body")}
+            border: 1px solid {HAIRLINE};
+            border-radius: {ROUNDED["sm"]};
+            padding: 11px 28px;
+            {font_css("button")}
         }}
-        QPushButton:hover {{
-            background: {rgba(PRIMARY, 0.08)};
+        {_BTN_BASE}:hover {{
+            background: {PRIMARY_MUTED};
+            border-color: {PRIMARY};
         }}
-        QPushButton:pressed {{
-            background: {rgba(PRIMARY, 0.15)};
+        {_BTN_BASE}:pressed {{
+            background: {rgba(PRIMARY, 0.22)};
         }}
-        QPushButton:disabled {{
-            color: {INK_MUTED_48};
+        {_BTN_BASE}:disabled {{
+            color: {MUTED};
             border-color: {HAIRLINE};
-            background: transparent;
         }}
     """
 
 
 def ghost_destructive_button_style():
-    """Ghost pill for destructive actions (delete)."""
     return f"""
-        QPushButton {{
+        {_BTN_BASE} {{
             background: transparent;
-            color: {DESTRUCTIVE};
-            border: 1px solid {DESTRUCTIVE};
-            border-radius: {ROUNDED["pill"]};
-            padding: 10px 21px;
-            {font_css("body")}
+            color: {ERROR_CRIMSON};
+            border: 1px solid {HAIRLINE};
+            border-radius: {ROUNDED["sm"]};
+            padding: 10px 28px;
+            {font_css("button")}
         }}
-        QPushButton:hover {{
-            background: {rgba(DESTRUCTIVE, 0.08)};
+        {_BTN_BASE}:hover {{
+            background: {rgba(ERROR_CRIMSON, 0.10)};
+            border-color: {ERROR_CRIMSON};
         }}
-        QPushButton:pressed {{
-            background: {rgba(DESTRUCTIVE, 0.15)};
+        {_BTN_BASE}:pressed {{
+            background: {rgba(ERROR_CRIMSON, 0.22)};
         }}
-        QPushButton:disabled {{
-            color: {INK_MUTED_48};
+        {_BTN_BASE}:disabled {{
+            color: {MUTED};
             border-color: {HAIRLINE};
-            background: transparent;
         }}
     """
 
 
 def utility_button_style():
-    """Compact utility button — small radius, subtle."""
     return f"""
-        QPushButton {{
-            background: {CANVAS};
-            color: {INK};
+        {_BTN_BASE} {{
+            background: transparent;
+            color: {BODY};
             border: 1px solid {HAIRLINE};
             border-radius: {ROUNDED["sm"]};
             padding: 6px 14px;
-            {font_css("caption")}
+            {font_css("label")}
         }}
-        QPushButton:hover {{
-            background: {DIVIDER_SOFT};
-        }}
-        QPushButton:pressed {{
-            background: {HAIRLINE};
-        }}
-        QPushButton:checked {{
-            background: {PRIMARY};
-            color: {CANVAS};
+        {_BTN_BASE}:hover {{
+            background: {PRIMARY_MUTED};
             border-color: {PRIMARY};
+            color: {PRIMARY};
+        }}
+        {_BTN_BASE}:pressed {{
+            background: {rgba(PRIMARY, 0.22)};
+        }}
+        {_BTN_BASE}:checked {{
+            background: {PRIMARY};
+            color: #ffffff;
+            border-color: {PRIMARY};
+        }}
+        {_BTN_BASE}:disabled {{
+            color: {MUTED};
+            border-color: {HAIRLINE};
         }}
     """
 
 
 def utility_danger_button_style():
-    """Utility button that turns red on hover (clear button)."""
     return f"""
-        QPushButton {{
-            background: {CANVAS};
-            color: {INK};
+        {_BTN_BASE} {{
+            background: transparent;
+            color: {BODY};
             border: 1px solid {HAIRLINE};
             border-radius: {ROUNDED["sm"]};
             padding: 6px 14px;
-            {font_css("caption")}
+            {font_css("label")}
         }}
-        QPushButton:hover {{
-            background: {rgba(DESTRUCTIVE, 0.08)};
-            color: {DESTRUCTIVE};
-            border-color: {DESTRUCTIVE};
+        {_BTN_BASE}:hover {{
+            background: {rgba(ERROR_CRIMSON, 0.10)};
+            color: {ERROR_CRIMSON};
+            border-color: {ERROR_CRIMSON};
+        }}
+        {_BTN_BASE}:pressed {{
+            background: {rgba(ERROR_CRIMSON, 0.22)};
+        }}
+        {_BTN_BASE}:disabled {{
+            color: {MUTED};
+            border-color: {HAIRLINE};
         }}
     """
 
 
 def checkable_pill_button_style():
-    """Toggle button — ghost when off, filled Action Blue when checked."""
     return f"""
-        QPushButton {{
+        {_BTN_BASE} {{
             background: transparent;
-            color: {PRIMARY};
-            border: 1px solid {PRIMARY};
-            border-radius: {ROUNDED["pill"]};
-            padding: 10px 21px;
-            {font_css("body")}
+            color: {BODY};
+            border: 1px solid {HAIRLINE};
+            border-radius: {ROUNDED["sm"]};
+            padding: 10px 24px;
+            {font_css("button")}
         }}
-        QPushButton:hover {{
-            background: {rgba(PRIMARY, 0.08)};
+        {_BTN_BASE}:hover {{
+            background: {ACCENT_MUTED};
+            border-color: {ACCENT};
         }}
-        QPushButton:checked {{
-            background: {PRIMARY};
-            color: {CANVAS};
+        {_BTN_BASE}:checked {{
+            background: {ACCENT};
+            color: #ffffff;
+            border-color: {ACCENT};
         }}
-        QPushButton:checked:hover {{
-            background: {PRIMARY_FOCUS};
+        {_BTN_BASE}:checked:hover {{
+            background: {ACCENT_HOVER};
         }}
-        QPushButton:disabled {{
-            color: {INK_MUTED_48};
+        {_BTN_BASE}:disabled {{
+            color: {MUTED};
             border-color: {HAIRLINE};
-            background: transparent;
         }}
     """
 
 
-# ── Panel / Card Styles ──────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# Panel & card styles — flat, no rounded corners
+# ══════════════════════════════════════════════════════════════════════════════
 
 def parchment_panel_style():
-    """Side panel with parchment background."""
     return f"""
-        background: {PARCHMENT};
+        background: {SURFACE_CARD};
         border: none;
+        border-right: 1px solid {HAIRLINE};
     """
 
 
 def card_style(selected=False):
-    """Thumbnail card border."""
-    border_color = PRIMARY if selected else HAIRLINE
+    bg = ACCENT_MUTED if selected else SURFACE_CARD
+    border = ACCENT if selected else HAIRLINE
     return f"""
-        background: {DIVIDER_SOFT};
-        border: 2px solid {border_color};
-        border-radius: {ROUNDED["xs"]};
+        background: {bg};
+        border: 1px solid {border};
+        border-radius: {ROUNDED["sm"]};
     """
 
 
 def frosted_bar_style():
-    """Top bar / sub-nav — parchment with hairline bottom border."""
     return f"""
-        background: {PARCHMENT};
+        background: {SURFACE_NAV};
         border-bottom: 1px solid {HAIRLINE};
     """

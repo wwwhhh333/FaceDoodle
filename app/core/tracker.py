@@ -33,6 +33,8 @@ from app.utils.image_proc import load_rgba_sticker
 from app.utils import storage
 from app.core.tracker_stickers import StickerManager
 from app.core.tracker_animation import AnimationProcessor
+from app.core.sticker_registry import StickerRegistry
+from app.core.protocol import Adjustment, StickerInstance
 
 log = logging.getLogger(__name__)
 
@@ -345,9 +347,8 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self.gen_state = GenerationState()
         self.face_canvas = FaceDrawCanvas()
 
-        self.active_stickers = []       # list[dict], z-order: index 0 = bottom
+        self.registry = StickerRegistry(max_stickers=self.MAX_STICKERS)
         self.edit_target_id = None
-        self.adjustments = {}           # instance_id -> {offset_x, offset_y, rotation, scale_mult}
         self._sticker_adjustments = {}  # sticker_id -> default adjustment (for restore)
 
         self.cached_face_data = None
@@ -365,8 +366,18 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self._pending_texture_gen = None   # AnimGenTexture message
         self._texture_gen_running = False
 
+        # Register cross-domain cleanup: when a sticker is removed, animation
+        # processor must also clean up its state.  This replaces the old pattern
+        # of StickerManager directly calling self.texture_animator.unregister()
+        # and self._anim_evaluations.pop().
+        self.registry.on("removed", self.texture_animator.unregister)
+        def _cleanup_anim(iid):
+            self._anim_evaluations.pop(iid, None)
+            self._adj_is_delta.discard(iid)
+        self.registry.on("removed", _cleanup_anim)
+
         self.conversation_history = []   # list[dict], multi-turn dialog state
-        self.max_conversation_turns = 6  # keep last 6 messages (3 turns)
+        self.max_conversation_turns = 10  # keep last 10 messages (5 turns)
 
         self._last_synced_state = None   # fingerprint to skip no-op _sync_state_to_ui pushes
         self._last_face_fp = None        # (fc_x, fc_y, fw) for change detection
@@ -418,15 +429,12 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             mock_sticker = load_rgba_sticker(temp_files[0])
             if mock_sticker is not None:
                 instance_id = str(uuid.uuid4())
-                self.active_stickers.append({
-                    "instance_id": instance_id, "sticker_id": None,
-                    "sticker": mock_sticker, "location": "forehead",
-                    "scale": 1.0, "prompt": "Mock",
-                })
-                self.adjustments[instance_id] = {
-                    "offset_x": 0.0, "offset_y": 0.0,
-                    "rotation": 0.0, "scale_mult": 1.0,
-                }
+                inst = StickerInstance(
+                    instance_id=instance_id,
+                    sticker_id="", sticker=mock_sticker,
+                    location="forehead", scale=1.0, prompt="Mock",
+                )
+                self.registry.add(inst)
                 log.info("Mock 模式: 已加载 %s", temp_files[0])
 
     # ── frame i/o ──
@@ -476,7 +484,8 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 target=ai_worker_thread,
                 args=(cmd, self.result_queue, self.api_key, self.mock, self.gen_state,
                       list(self.conversation_history),
-                      list(self.active_stickers)),
+                      [{"prompt": s.prompt, "location": s.location}
+                       for s in self.registry.all]),
                 daemon=True
             ).start()
 
@@ -570,7 +579,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
 
         Returns sticker_id on success, None if at capacity.
         """
-        if len(self.active_stickers) >= self.MAX_STICKERS:
+        if self.registry.count >= self.MAX_STICKERS:
             log.warning("贴纸数量已达上限 (%d)，跳过添加", self.MAX_STICKERS)
             return None
 
@@ -617,7 +626,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         if len(self.conversation_history) > self.max_conversation_turns:
             self.conversation_history = self.conversation_history[-self.max_conversation_turns:]
         # Auto-clear only when stickers that were once present are all removed
-        if not self.active_stickers and self._had_stickers:
+        if self.registry.count == 0 and self._had_stickers:
             self.conversation_history.clear()
             self._had_stickers = False
 
@@ -634,33 +643,36 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
             if self.edit_target_id is None:
                 continue
 
-            adj = self.adjustments.get(self.edit_target_id)
-            if adj is None:
+            if not self.registry.has(self.edit_target_id):
                 continue
 
+            adj = self.registry.get_adj(self.edit_target_id)
+
             if isinstance(msg, AdjMove):
-                adj["offset_x"] += msg.dx / face_w
-                adj["offset_y"] += msg.dy / face_w
+                adj.offset_x += msg.dx / face_w
+                adj.offset_y += msg.dy / face_w
                 dirty = True
             elif isinstance(msg, AdjRotate):
-                adj["rotation"] += msg.d_angle
+                adj.rotation += msg.d_angle
                 dirty = True
             elif isinstance(msg, AdjScale):
-                adj["scale_mult"] *= msg.multiplier
-                adj["scale_mult"] = max(0.05, adj["scale_mult"])
+                adj.scale_mult *= msg.multiplier
+                adj.scale_mult = max(0.05, adj.scale_mult)
                 dirty = True
             elif isinstance(msg, AdjReset):
-                adj["offset_x"] = 0.0
-                adj["offset_y"] = 0.0
-                adj["rotation"] = 0.0
-                adj["scale_mult"] = 1.0
+                adj.offset_x = 0.0
+                adj.offset_y = 0.0
+                adj.rotation = 0.0
+                adj.scale_mult = 1.0
                 dirty = True
 
         if dirty:
-            instance = next((s for s in self.active_stickers
-                             if s["instance_id"] == self.edit_target_id), None)
+            instance = self.registry.get(self.edit_target_id)
             if instance:
-                storage.save_sticker_adjustments(instance["sticker_id"], adj)
+                storage.save_sticker_adjustments(instance.sticker_id, {
+                    "offset_x": adj.offset_x, "offset_y": adj.offset_y,
+                    "rotation": adj.rotation, "scale_mult": adj.scale_mult,
+                })
 
     # ── gallery queue ──
 
@@ -762,33 +774,35 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         if self.gen_state.is_generating or self.edit_target_id is not None or self.face_draw_active:
             frame = render_face_mesh(frame, face_data)
 
-        for instance in self.active_stickers:
-            if instance["sticker"] is None:
+        for instance in self.registry.all:
+            if instance.sticker is None:
                 continue
-            iid = instance["instance_id"]
-            manual = self.adjustments.get(iid, {
-                "offset_x": 0.0, "offset_y": 0.0,
-                "rotation": 0.0, "scale_mult": 1.0,
-            })
-            adj = dict(manual)
+            iid = instance.instance_id
+            manual = self.registry.get_adj(iid)
+            adj = {
+                "offset_x": manual.offset_x,
+                "offset_y": manual.offset_y,
+                "rotation": manual.rotation,
+                "scale_mult": manual.scale_mult,
+            }
             if self.anim_engine.is_playing(iid):
                 anim = self._anim_evaluations.get(iid)
                 if anim:
-                    adj["offset_x"] = anim["offset_x"] + manual["offset_x"]
-                    adj["offset_y"] = anim["offset_y"] + manual["offset_y"]
-                    adj["rotation"] = anim["rotation"] + manual["rotation"]
-                    adj["scale_mult"] = anim["scale_mult"] * manual["scale_mult"]
+                    adj["offset_x"] = anim["offset_x"] + manual.offset_x
+                    adj["offset_y"] = anim["offset_y"] + manual.offset_y
+                    adj["rotation"] = anim["rotation"] + manual.rotation
+                    adj["scale_mult"] = anim["scale_mult"] * manual.scale_mult
                     adj["opacity"] = anim.get("opacity", 1.0)
             adj["edit_mode"] = (iid == self.edit_target_id)
-            if instance.get("is_animated"):
+            if instance.is_animated:
                 frame_idx, cols, rows = self.texture_animator.get_frame_params(iid)
-                sticker = extract_sprite_frame(instance["sticker"], frame_idx, cols, rows)
+                sticker = extract_sprite_frame(instance.sticker, frame_idx, cols, rows)
             else:
-                sticker = instance["sticker"]
+                sticker = instance.sticker
             content = {
                 "sticker": sticker,
-                "location": instance["location"],
-                "scale": instance["scale"],
+                "location": instance.location,
+                "scale": instance.scale,
             }
             frame = render_scene(frame, face_data, content, adj)
 
@@ -813,15 +827,15 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
 
     def _sync_state_to_ui(self, face_data=None):
         instances_info = []
-        for s in self.active_stickers:
+        for s in self.registry.all:
+            adj = self.registry.get_adj(s.instance_id)
             info = {
-                "instance_id": s["instance_id"],
-                "sticker_id": s["sticker_id"],
-                "region": s["location"],
+                "instance_id": s.instance_id,
+                "sticker_id": s.sticker_id,
+                "region": s.location,
+                "offset_x": adj.offset_x,
+                "offset_y": adj.offset_y,
             }
-            adj = self.adjustments.get(s["instance_id"], {})
-            info["offset_x"] = adj.get("offset_x", 0.0)
-            info["offset_y"] = adj.get("offset_y", 0.0)
             instances_info.append(info)
 
         fc_x, fc_y, fw = 0.0, 0.0, 0.0
@@ -833,10 +847,11 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                 fw = max(fh[2], 1.0)
 
         fingerprint = (
-            len(self.active_stickers),
-            tuple((i["instance_id"], i["sticker_id"], i["region"],
-                   round(i.get("offset_x", 0), 3), round(i.get("offset_y", 0), 3))
-                  for i in instances_info),
+            self.registry.count,
+            tuple((s.instance_id, s.sticker_id, s.location,
+                   round(self.registry.get_adj(s.instance_id).offset_x, 3),
+                   round(self.registry.get_adj(s.instance_id).offset_y, 3))
+                  for s in self.registry.all),
             self.edit_target_id,
         )
         if fingerprint == self._last_synced_state and not self._face_data_changed(fc_x, fc_y, fw):
@@ -845,7 +860,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self._last_face_fp = (round(fc_x, 1), round(fc_y, 1), round(fw, 1))
 
         self.display_queue.put(DispActiveStickersChanged(
-            active_count=len(self.active_stickers),
+            active_count=self.registry.count,
             instances=instances_info,
             edit_target_id=self.edit_target_id,
             face_center_x=fc_x,

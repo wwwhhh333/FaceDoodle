@@ -4,6 +4,8 @@ import time
 import pytest
 
 from app.core.tracker import GenerationState
+from app.core.sticker_registry import StickerRegistry
+from app.core.protocol import StickerInstance
 
 
 # ── GenerationState ──
@@ -123,9 +125,9 @@ class TestAppendConversation:
     def test_appends_user_message(self):
         from app.core.tracker import ConsumerProcessor
         cp = ConsumerProcessor.__new__(ConsumerProcessor)
+        cp.registry = StickerRegistry(max_stickers=20)
         cp.conversation_history = []
         cp.max_conversation_turns = 6
-        cp.active_stickers = []
         cp._had_stickers = False
         cp._append_conversation("user", "hello")
         assert len(cp.conversation_history) == 1
@@ -134,9 +136,9 @@ class TestAppendConversation:
     def test_appends_assistant_message(self):
         from app.core.tracker import ConsumerProcessor
         cp = ConsumerProcessor.__new__(ConsumerProcessor)
+        cp.registry = StickerRegistry(max_stickers=20)
         cp.conversation_history = []
         cp.max_conversation_turns = 6
-        cp.active_stickers = []
         cp._had_stickers = False
         cp._append_conversation("assistant", "generated")
         assert cp.conversation_history[0]["role"] == "assistant"
@@ -144,9 +146,9 @@ class TestAppendConversation:
     def test_empty_content_skipped(self):
         from app.core.tracker import ConsumerProcessor
         cp = ConsumerProcessor.__new__(ConsumerProcessor)
+        cp.registry = StickerRegistry(max_stickers=20)
         cp.conversation_history = []
         cp.max_conversation_turns = 6
-        cp.active_stickers = []
         cp._had_stickers = False
         cp._append_conversation("user", "")
         assert len(cp.conversation_history) == 0
@@ -154,9 +156,9 @@ class TestAppendConversation:
     def test_none_content_skipped(self):
         from app.core.tracker import ConsumerProcessor
         cp = ConsumerProcessor.__new__(ConsumerProcessor)
+        cp.registry = StickerRegistry(max_stickers=20)
         cp.conversation_history = []
         cp.max_conversation_turns = 6
-        cp.active_stickers = []
         cp._had_stickers = False
         cp._append_conversation("user", None)
         assert len(cp.conversation_history) == 0
@@ -164,9 +166,9 @@ class TestAppendConversation:
     def test_truncates_at_max_turns(self):
         from app.core.tracker import ConsumerProcessor
         cp = ConsumerProcessor.__new__(ConsumerProcessor)
+        cp.registry = StickerRegistry(max_stickers=20)
         cp.conversation_history = []
         cp.max_conversation_turns = 4
-        cp.active_stickers = []
         cp._had_stickers = False
         for i in range(6):
             cp._append_conversation("user", f"msg {i}")
@@ -177,9 +179,9 @@ class TestAppendConversation:
     def test_auto_clear_when_stickers_removed(self):
         from app.core.tracker import ConsumerProcessor
         cp = ConsumerProcessor.__new__(ConsumerProcessor)
+        cp.registry = StickerRegistry(max_stickers=20)
         cp.conversation_history = [{"role": "user", "content": "hello"}]
         cp.max_conversation_turns = 6
-        cp.active_stickers = []  # no stickers
         cp._had_stickers = True   # but were present before
         cp._append_conversation("user", "new message")
         # Auto-clear triggers after append: no active stickers, was had_stickers
@@ -189,9 +191,10 @@ class TestAppendConversation:
     def test_auto_clear_not_triggered_if_stickers_still_active(self):
         from app.core.tracker import ConsumerProcessor
         cp = ConsumerProcessor.__new__(ConsumerProcessor)
+        cp.registry = StickerRegistry(max_stickers=20)
         cp.conversation_history = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
         cp.max_conversation_turns = 6
-        cp.active_stickers = [{"instance_id": "1"}]
+        cp.registry.add(StickerInstance(instance_id="1"))
         cp._had_stickers = True
         cp._append_conversation("user", "again")
         # Active stickers exist, so no auto-clear

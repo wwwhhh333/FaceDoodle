@@ -6,12 +6,12 @@ The dialog presents a two-pane layout:
 - Bottom: Save / Reset to Defaults / Delete / Close buttons
 """
 
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QListWidget, QListWidgetItem, QLineEdit, QDoubleSpinBox,
     QPushButton, QLabel, QMessageBox,
 )
-from PyQt5.QtCore import Qt
+from PySide6.QtCore import Qt
 from app.ui.theme import (
     PRIMARY, INK, INK_MUTED_48, INK_MUTED_80, CANVAS, PARCHMENT,
     HAIRLINE, DESTRUCTIVE, font_css, global_stylesheet,
@@ -45,7 +45,7 @@ class StylePresetManagerDialog(QDialog):
 
         # ── Top: Add button ──
         self.add_btn = QPushButton("+ 新增预设")
-        self.add_btn.setCursor(Qt.PointingHandCursor)
+        self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_btn.setStyleSheet(
             f"QPushButton {{ background: {PRIMARY}; color: #fff; border: none; "
             f"border-radius: 6px; padding: 6px 14px; font-weight: 600; {font_css('caption')} }}"
@@ -120,7 +120,7 @@ class StylePresetManagerDialog(QDialog):
         btn_row.setSpacing(8)
 
         self.save_btn = QPushButton("保存更改")
-        self.save_btn.setCursor(Qt.PointingHandCursor)
+        self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_btn.setStyleSheet(
             f"QPushButton {{ background: {PRIMARY}; color: #fff; border: none; "
             f"border-radius: 6px; padding: 6px 16px; font-weight: 600; {font_css('caption')} }}"
@@ -130,7 +130,7 @@ class StylePresetManagerDialog(QDialog):
         btn_row.addWidget(self.save_btn)
 
         self.reset_btn = QPushButton("重置为默认")
-        self.reset_btn.setCursor(Qt.PointingHandCursor)
+        self.reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reset_btn.setStyleSheet(
             f"QPushButton {{ color: {INK}; background: {PARCHMENT}; border: 1px solid {HAIRLINE}; "
             f"border-radius: 6px; padding: 6px 12px; {font_css('caption')} }}"
@@ -139,7 +139,7 @@ class StylePresetManagerDialog(QDialog):
         btn_row.addWidget(self.reset_btn)
 
         self.delete_btn = QPushButton("删除预设")
-        self.delete_btn.setCursor(Qt.PointingHandCursor)
+        self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_btn.setStyleSheet(
             f"QPushButton {{ color: #dc2626; background: rgba(220,38,38,0.08); "
             f"border: 1px solid rgba(220,38,38,0.25); border-radius: 6px; "

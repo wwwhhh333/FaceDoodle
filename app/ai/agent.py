@@ -49,6 +49,45 @@ KEYWORD_REGION_MAP = {
     "nose": ["鼻子", "猪鼻", "小丑鼻", "红鼻子", "狗鼻", "猫鼻", "鼻"],
     "mouth": ["胡子", "口罩", "嘴唇", "口红", "牙齿", "舌头", "嘴", "獠牙", "虎牙", "龅牙", "口"],
     "cheek_left": ["腮红", "面纹", "伤疤", "雀斑", "脸红", "纹身", "刀疤", "爱心", "星星", "脸", "面"],
+    "cheek_right": ["右脸", "右侧脸颊", "右颊"],
+}
+
+KEYWORD_ENGLISH_MAP = {
+    "猫耳": "cat ears", "兔耳": "bunny ears", "耳朵": "animal ears",
+    "帽子": "hat", "皇冠": "crown", "光环": "halo", "王冠": "crown", "犄角": "horns",
+    "触角": "antennae", "发箍": "headband", "头箍": "headband",
+    "发饰": "hair ornament", "头饰": "hair accessory", "发带": "headband",
+    "蝴蝶结": "bow", "头巾": "bandana", "角": "horns",
+    "眼镜": "glasses", "墨镜": "sunglasses", "眼罩": "eye patch",
+    "眼影": "eyeshadow", "眼线": "eyeliner", "睫毛": "eyelashes",
+    "护目镜": "goggles", "太阳镜": "sunglasses", "美瞳": "colored contact lens",
+    "眼": "eye accessory", "眉毛": "eyebrows",
+    "鼻子": "nose", "猪鼻": "pig nose", "小丑鼻": "clown nose",
+    "红鼻子": "red nose", "狗鼻": "dog nose", "猫鼻": "cat nose",
+    "鼻": "nose accessory",
+    "胡子": "beard", "口罩": "face mask", "嘴唇": "lips", "口红": "lipstick",
+    "牙齿": "teeth", "舌头": "tongue", "嘴": "mouth sticker",
+    "獠牙": "fangs", "虎牙": "fang", "龅牙": "buck teeth",
+    "口": "mouth accessory",
+    "腮红": "blush", "面纹": "face paint", "伤疤": "scar",
+    "雀斑": "freckles", "脸红": "blush", "纹身": "tattoo",
+    "刀疤": "scar", "爱心": "heart", "星星": "star",
+    "脸": "face sticker", "面": "face decal",
+    "右脸": "right cheek accessory", "右侧脸颊": "right cheek sticker", "右颊": "right cheek decal",
+}
+
+REGION_PROMPT_BASES = {
+    "head_top": "isolated headwear, detached, no face, on white background",
+    "forehead_top": "isolated forehead accessory, detached, no face",
+    "forehead_full": "isolated hair accessory, detached, no face",
+    "eyes": "isolated eyewear accessory, no face, product shot, on white background",
+    "brows": "isolated eyebrow sticker, decal, no face",
+    "nose": "isolated nose accessory, detached snout, no face",
+    "mouth": "isolated mouth accessory, mask prop, no face",
+    "cheek_left": "isolated cheek sticker, face decal, no face, on white background",
+    "cheek_right": "isolated cheek sticker, face decal, no face, on white background",
+    "chin": "isolated chin accessory, detached, no face",
+    "jaw": "isolated jaw accessory, detached, no face",
 }
 
 BASE_SYSTEM_PROMPT = """你是一个 AR 滤镜设计师助手，负责将用户的中文描述转化为 JSON 格式的贴纸生成指令。
@@ -238,14 +277,19 @@ class FaceDoodleAgent:
                 f"{kw}安排上了！",
             ]
             msg = messages[hash(user_input) % len(messages)]
+            # Build English prompt from keyword mapping + region template
+            english_term = KEYWORD_ENGLISH_MAP.get(kw, kw)
+            base = REGION_PROMPT_BASES.get(region, "isolated accessory, no face, on white background")
+            prompt_text = f"{english_term}, {base}"
         else:
             msg = f"帮你生成了「{user_input}」的贴纸"
+            prompt_text = user_input
 
         return {
             "action": "generate",
             "message": msg,
             "tasks": [{
-                "prompt": build_positive_prompt(user_input),
+                "prompt": build_positive_prompt(prompt_text),
                 "region": region,
                 "scale": 1.0,
             }],

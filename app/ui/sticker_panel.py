@@ -1,9 +1,9 @@
 """Active stickers panel — shows which stickers are on the face."""
 
-from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QScrollArea,
+from PySide6.QtWidgets import (QWidget, QLabel, QPushButton, QScrollArea,
                              QHBoxLayout, QVBoxLayout)
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt, pyqtSignal
+from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, Signal
 
 from app.ui.widgets import _bgra_to_qpixmap
 from app.ui.theme import (PRIMARY, CANVAS, PARCHMENT, INK, INK_MUTED_48,
@@ -13,15 +13,15 @@ from app.ui.theme import (PRIMARY, CANVAS, PARCHMENT, INK, INK_MUTED_48,
 
 class ActiveStickerCard(QWidget):
     """Small card representing a sticker currently on face."""
-    clicked = pyqtSignal(str)       # instance_id — select as edit target
-    removed = pyqtSignal(str)       # instance_id — remove from face
+    clicked = Signal(str)       # instance_id — select as edit target
+    removed = Signal(str)       # instance_id — remove from face
 
     def __init__(self, instance_id, thumb_bgra, region_label, parent=None):
         super().__init__(parent)
         self.instance_id = instance_id
         self._is_edit_target = False
         self.setFixedSize(84, 100)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -30,7 +30,7 @@ class ActiveStickerCard(QWidget):
         # Thumbnail
         self.thumb_label = QLabel()
         self.thumb_label.setFixedSize(72, 72)
-        self.thumb_label.setAlignment(Qt.AlignCenter)
+        self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumb_label.setStyleSheet(
             f"background: {DIVIDER_SOFT}; border: 2px solid {HAIRLINE}; border-radius: {ROUNDED['xs']};"
         )
@@ -40,11 +40,11 @@ class ActiveStickerCard(QWidget):
                 self.thumb_label.setPixmap(
                     pix.scaled(68, 68, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 )
-        layout.addWidget(self.thumb_label, alignment=Qt.AlignCenter)
+        layout.addWidget(self.thumb_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # Region label
         self.region_label = QLabel(region_label)
-        self.region_label.setAlignment(Qt.AlignCenter)
+        self.region_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.region_label.setStyleSheet(
             f"color: {INK_MUTED_48}; {font_css('micro-legal')} background: transparent; border: none;"
         )
@@ -53,7 +53,7 @@ class ActiveStickerCard(QWidget):
         # Remove button
         self._remove_btn = QPushButton("×", self)
         self._remove_btn.setFixedSize(16, 16)
-        self._remove_btn.setCursor(Qt.PointingHandCursor)
+        self._remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._remove_btn.setStyleSheet(
             f"QPushButton {{ background: {rgba(INK, 0.5)}; color: {CANVAS}; border: none; "
             f"font-size: 14px; font-weight: bold; border-radius: {ROUNDED['full']}; }}"
@@ -74,7 +74,7 @@ class ActiveStickerCard(QWidget):
             )
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             pos = event.pos()
             if self._remove_btn.geometry().contains(pos):
                 return
@@ -84,8 +84,8 @@ class ActiveStickerCard(QWidget):
 class ActiveStickersPanel(QWidget):
     """Vertical scrollable panel showing stickers currently on face."""
 
-    select_edit_target = pyqtSignal(str)  # instance_id
-    remove_sticker = pyqtSignal(str)       # instance_id
+    select_edit_target = Signal(str)  # instance_id
+    remove_sticker = Signal(str)       # instance_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -97,8 +97,8 @@ class ActiveStickersPanel(QWidget):
         outer.setSpacing(0)
 
         self._scroll = QScrollArea()
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setWidgetResizable(True)
         self._scroll.setStyleSheet(f"""
             QScrollArea {{ background: transparent; border: none; }}

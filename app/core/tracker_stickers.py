@@ -1,4 +1,10 @@
-"""Sticker lifecycle management mixin for ConsumerProcessor."""
+"""Sticker lifecycle management mixin for ConsumerProcessor.
+
+Uses ``StickerRegistry`` (``self.registry``) for all instance storage and
+relies on the registry's ``"removed"`` event for cross-domain cleanup
+(texture animator, animation evaluation state) — registered once in
+``ConsumerProcessor.__init__``.
+"""
 
 import logging
 import uuid
@@ -6,6 +12,7 @@ import uuid
 from app.core.protocol import (
     GalAddSticker, GalRemoveSticker, GalSelectEditTarget,
     GalLoadTemplate, GalLoadSticker, GalMergeGroup,
+    Adjustment, StickerInstance,
     DispStickerSaved,
 )
 
@@ -19,31 +26,30 @@ class StickerManager:
 
     def _add_sticker_instance(self, sticker_img, sid, location, scale, prompt, anim_meta=None):
         instance_id = str(uuid.uuid4())
+        anim_meta = anim_meta or {}
+        inst = StickerInstance(
+            instance_id=instance_id,
+            sticker_id=sid,
+            sticker=sticker_img,
+            location=location,
+            scale=scale,
+            prompt=prompt,
+            is_animated=anim_meta.get("is_animated", False),
+            frame_count=anim_meta.get("frame_count", 0),
+            frame_cols=anim_meta.get("frame_cols", 0),
+            frame_rows=anim_meta.get("frame_rows", 0),
+            fps=anim_meta.get("fps", 8),
+        )
         saved = (self._sticker_adjustments.get(sid)
                  or storage.get_sticker_adjustments(sid))
-        adj = dict(saved) if saved else {
-            "offset_x": 0.0, "offset_y": 0.0,
-            "rotation": 0.0, "scale_mult": 1.0,
-        }
-        self.adjustments[instance_id] = adj
-        instance = {
-            "instance_id": instance_id, "sticker_id": sid,
-            "sticker": sticker_img, "location": location,
-            "scale": scale, "prompt": prompt,
-        }
-        if anim_meta and anim_meta.get("is_animated"):
-            instance["is_animated"] = True
-            instance["frame_count"] = anim_meta.get("frame_count", 16)
-            instance["frame_cols"] = anim_meta.get("frame_cols", 1)
-            instance["frame_rows"] = anim_meta.get("frame_rows", 1)
-            instance["fps"] = anim_meta.get("fps", 8)
-        self.active_stickers.append(instance)
+        adj = Adjustment(**saved) if saved else Adjustment()
+        self.registry.add(inst, adj)
         self._had_stickers = True
         return instance_id
 
     def _handle_add_sticker(self, gmsg):
-        if len(self.active_stickers) >= self.MAX_STICKERS:
-            log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.MAX_STICKERS)
+        if self.registry.is_full:
+            log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.registry.max_stickers)
             return
         sid = gmsg.sticker_id
         if not sid:
@@ -83,24 +89,18 @@ class StickerManager:
 
     def _handle_remove_sticker(self, gmsg):
         iid = gmsg.instance_id
-        removed_sticker_id = None
-        for s in self.active_stickers:
-            if s["instance_id"] == iid:
-                removed_sticker_id = s.get("sticker_id")
-                break
-        self.active_stickers = [s for s in self.active_stickers if s["instance_id"] != iid]
-        self.adjustments.pop(iid, None)
-        self._anim_evaluations.pop(iid, None)
-        self._adj_is_delta.discard(iid)
-        self.texture_animator.unregister(iid)
+        inst = self.registry.get(iid)
+        removed_sticker_id = inst.sticker_id if inst else None
+        self.registry.remove(iid)
         if self.edit_target_id == iid:
-            self.edit_target_id = self.active_stickers[-1]["instance_id"] if self.active_stickers else None
+            all_instances = self.registry.all
+            self.edit_target_id = all_instances[-1].instance_id if all_instances else None
         if self.active_content and self.active_content.get("sticker_id") == removed_sticker_id:
             self.active_content = None
 
     def _handle_select_edit_target(self, gmsg):
         iid = gmsg.instance_id
-        if iid and any(s["instance_id"] == iid for s in self.active_stickers):
+        if iid and self.registry.has(iid):
             self.edit_target_id = iid
         elif not iid:
             self.edit_target_id = None
@@ -108,8 +108,8 @@ class StickerManager:
     def _handle_load_template(self, gmsg):
         t = gmsg.template
         if t and t.get("image") is not None:
-            if len(self.active_stickers) >= self.MAX_STICKERS:
-                log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.MAX_STICKERS)
+            if self.registry.is_full:
+                log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.registry.max_stickers)
                 return
             iid = self._add_sticker_instance(
                 t["image"], t["id"],
@@ -125,20 +125,17 @@ class StickerManager:
                 "prompt": t.get("name", "模板"),
             }
         else:
-            for s in self.active_stickers:
-                self.texture_animator.unregister(s["instance_id"])
-            self.active_stickers.clear()
-            self.adjustments.clear()
-            self._anim_evaluations.clear()
-            self._adj_is_delta.clear()
+            for s in self.registry.all:
+                self.texture_animator.unregister(s.instance_id)
+            self.registry.clear()
             self.edit_target_id = None
             self.active_content = None
 
     def _handle_load_sticker(self, gmsg):
         sid = gmsg.sticker_id
         if sid:
-            if len(self.active_stickers) >= self.MAX_STICKERS:
-                log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.MAX_STICKERS)
+            if self.registry.is_full:
+                log.warning("贴纸数量已达上限 (%d)，忽略添加请求", self.registry.max_stickers)
                 return
             loaded, meta = storage.get_sticker(sid)
             if loaded is not None and meta is not None:
@@ -172,12 +169,9 @@ class StickerManager:
                     "prompt": meta.get("prompt", ""),
                 }
         else:
-            for s in self.active_stickers:
-                self.texture_animator.unregister(s["instance_id"])
-            self.active_stickers.clear()
-            self.adjustments.clear()
-            self._anim_evaluations.clear()
-            self._adj_is_delta.clear()
+            for s in self.registry.all:
+                self.texture_animator.unregister(s.instance_id)
+            self.registry.clear()
             self.edit_target_id = None
             self.active_content = None
 
@@ -187,16 +181,39 @@ class StickerManager:
         if len(iids) < 2 or not merge_face:
             return
 
-        to_merge = [s for s in self.active_stickers if s["instance_id"] in iids]
+        # Build the old-style dict list that composite_stickers_to_merged expects
+        to_merge = [s for s in self.registry.all if s.instance_id in iids]
         if len(to_merge) < 2:
             return
 
+        # Convert to old dict format for the renderer (it reads dict keys)
+        old_style_instances = [
+            {
+                "instance_id": s.instance_id,
+                "sticker_id": s.sticker_id,
+                "sticker": s.sticker,
+                "location": s.location,
+                "scale": s.scale,
+                "prompt": s.prompt,
+            }
+            for s in to_merge
+        ]
+        adjustments_dict = {
+            s.instance_id: {
+                "offset_x": self.registry.get_adj(s.instance_id).offset_x,
+                "offset_y": self.registry.get_adj(s.instance_id).offset_y,
+                "rotation": self.registry.get_adj(s.instance_id).rotation,
+                "scale_mult": self.registry.get_adj(s.instance_id).scale_mult,
+            }
+            for s in to_merge
+        }
+
         merged_img, merged_location, merged_scale, mrg_ox, mrg_oy = \
-            composite_stickers_to_merged(to_merge, self.adjustments, merge_face)
+            composite_stickers_to_merged(old_style_instances, adjustments_dict, merge_face)
         if merged_img is None:
             return
 
-        prompts = [s.get("prompt", "") for s in to_merge if s.get("prompt")]
+        prompts = [s.prompt for s in to_merge if s.prompt]
         merged_prompt = " + ".join(prompts[:3])
         sid = storage.save_sticker(merged_img, {
             "prompt": merged_prompt or "合并贴纸",
@@ -205,26 +222,22 @@ class StickerManager:
         })
 
         for s in to_merge:
-            iid = s["instance_id"]
-            self.active_stickers = [x for x in self.active_stickers if x["instance_id"] != iid]
-            self.adjustments.pop(iid, None)
-            self._anim_evaluations.pop(iid, None)
-            self._adj_is_delta.discard(iid)
-            self.texture_animator.unregister(iid)
+            self.registry.remove(s.instance_id)
 
         merged_instance_id = str(uuid.uuid4())
-        self.adjustments[merged_instance_id] = {
+        merged_inst = StickerInstance(
+            instance_id=merged_instance_id,
+            sticker_id=sid,
+            sticker=merged_img,
+            location=merged_location,
+            scale=merged_scale,
+            prompt=merged_prompt,
+        )
+        merged_adj = Adjustment(offset_x=mrg_ox, offset_y=mrg_oy, rotation=0.0, scale_mult=1.0)
+        self.registry.add(merged_inst, merged_adj)
+        storage.save_sticker_adjustments(sid, {
             "offset_x": mrg_ox, "offset_y": mrg_oy,
             "rotation": 0.0, "scale_mult": 1.0,
-        }
-        storage.save_sticker_adjustments(sid, self.adjustments[merged_instance_id])
-        self.active_stickers.append({
-            "instance_id": merged_instance_id,
-            "sticker_id": sid,
-            "sticker": merged_img,
-            "location": merged_location,
-            "scale": merged_scale,
-            "prompt": merged_prompt,
         })
         self.edit_target_id = merged_instance_id
         self.active_content = {

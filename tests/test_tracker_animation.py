@@ -5,11 +5,13 @@ import queue
 import pytest
 
 from app.core.animation import AnimationEngine, AnimationClip, Keyframe
+from app.core.protocol import Adjustment, StickerInstance
 from app.core.protocol import (
     AnimPlay, AnimPause, AnimStop, AnimSetClip,
     AnimAddKeyframe, AnimRemoveKeyframe, AnimUpdateKeyframe,
     AnimSetLoop, AnimSeek, AnimExport, AnimGenTexture,
 )
+from app.core.sticker_registry import StickerRegistry
 from app.core.tracker_animation import AnimationProcessor
 
 
@@ -20,8 +22,7 @@ class _TestAnimationProcessor(AnimationProcessor):
         self.anim_engine = AnimationEngine()
         self.animation_queue = animation_queue or queue.Queue()
         self.display_queue = display_queue or queue.Queue()
-        self.active_stickers = []
-        self.adjustments = {}
+        self.registry = StickerRegistry(max_stickers=20)
         self._anim_evaluations = {}
         self._adj_is_delta = set()
         self._pending_export = None
@@ -39,55 +40,62 @@ def proc():
 def proc_with_sticker(proc):
     """Add a sticker instance and return (proc, instance_id)."""
     iid = "test-instance-001"
-    proc.active_stickers.append({
-        "instance_id": iid, "sticker_id": "sid-001",
-        "sticker": None, "location": "forehead_top",
-        "scale": 1.0, "prompt": "test",
-    })
-    proc.adjustments[iid] = {
-        "offset_x": 0.0, "offset_y": 0.0,
-        "rotation": 0.0, "scale_mult": 1.0,
-    }
+    inst = StickerInstance(
+        instance_id=iid, sticker_id="sid-001",
+        sticker=None, location="forehead_top",
+        scale=1.0, prompt="test",
+    )
+    adj = Adjustment()
+    proc.registry.add(inst, adj)
     return proc, iid
 
 
 # ── _adj_to_delta / _adj_to_absolute ──
 
 class TestAdjConversion:
+    def _set_adj(self, proc, iid, ox, oy, rot, sm):
+        adj = proc.registry.get_adj(iid)
+        adj.offset_x = ox
+        adj.offset_y = oy
+        adj.rotation = rot
+        adj.scale_mult = sm
+
     def test_delta_subtracts_anim_values(self, proc):
         iid = "test-iid"
-        proc.adjustments[iid] = {"offset_x": 10.0, "offset_y": 5.0, "rotation": 2.0, "scale_mult": 2.0}
+        self._set_adj(proc, iid, 10.0, 5.0, 2.0, 2.0)
         proc._anim_evaluations[iid] = {"offset_x": 3.0, "offset_y": 1.0, "rotation": 0.5, "scale_mult": 1.5}
         proc._adj_to_delta(iid)
-        assert proc.adjustments[iid]["offset_x"] == pytest.approx(7.0)
-        assert proc.adjustments[iid]["offset_y"] == pytest.approx(4.0)
-        assert proc.adjustments[iid]["rotation"] == pytest.approx(1.5)
-        assert proc.adjustments[iid]["scale_mult"] == pytest.approx(2.0 / 1.5)
+        adj = proc.registry.get_adj(iid)
+        assert adj.offset_x == pytest.approx(7.0)
+        assert adj.offset_y == pytest.approx(4.0)
+        assert adj.rotation == pytest.approx(1.5)
+        assert adj.scale_mult == pytest.approx(2.0 / 1.5)
 
     def test_absolute_adds_anim_values(self, proc):
         iid = "test-iid"
-        proc.adjustments[iid] = {"offset_x": 7.0, "offset_y": 4.0, "rotation": 1.5, "scale_mult": 1.33333}
+        self._set_adj(proc, iid, 7.0, 4.0, 1.5, 1.33333)
         proc._anim_evaluations[iid] = {"offset_x": 3.0, "offset_y": 1.0, "rotation": 0.5, "scale_mult": 1.5}
         proc._adj_to_absolute(iid)
-        assert proc.adjustments[iid]["offset_x"] == pytest.approx(10.0)
-        assert proc.adjustments[iid]["offset_y"] == pytest.approx(5.0)
-        assert proc.adjustments[iid]["rotation"] == pytest.approx(2.0)
-        assert proc.adjustments[iid]["scale_mult"] == pytest.approx(2.0, rel=0.01)
+        adj = proc.registry.get_adj(iid)
+        assert adj.offset_x == pytest.approx(10.0)
+        assert adj.offset_y == pytest.approx(5.0)
+        assert adj.rotation == pytest.approx(2.0)
+        assert adj.scale_mult == pytest.approx(2.0, rel=0.01)
 
     def test_delta_no_anim_no_op(self, proc):
         iid = "test-iid"
-        proc.adjustments[iid] = {"offset_x": 5.0, "offset_y": 0.0, "rotation": 0.0, "scale_mult": 1.0}
+        self._set_adj(proc, iid, 5.0, 0.0, 0.0, 1.0)
         proc._adj_to_delta(iid)
-        # Should not crash; no change since no anim evaluation exists
-        assert proc.adjustments[iid]["offset_x"] == 5.0
+        adj = proc.registry.get_adj(iid)
+        assert adj.offset_x == 5.0
 
     def test_delta_zero_scale_mult_no_division_by_zero(self, proc):
         iid = "test-iid"
-        proc.adjustments[iid] = {"offset_x": 0.0, "offset_y": 0.0, "rotation": 0.0, "scale_mult": 2.0}
+        self._set_adj(proc, iid, 0.0, 0.0, 0.0, 2.0)
         proc._anim_evaluations[iid] = {"offset_x": 0.0, "offset_y": 0.0, "rotation": 0.0, "scale_mult": 0.0}
         proc._adj_to_delta(iid)
-        # Should fall back to 1.0 when anim scale_mult is ~0
-        assert proc.adjustments[iid]["scale_mult"] == 1.0
+        adj = proc.registry.get_adj(iid)
+        assert adj.scale_mult == 1.0
 
 
 # ── _process_animation_queue ──

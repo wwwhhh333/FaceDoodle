@@ -4,7 +4,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from multiprocessing import Process, Queue, Event
-from PyQt5.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 from app.core.tracker import producer, consumer
 from app.ui.main_window import FaceDoodleWindow
 from app.utils.config_loader import load_config, is_first_run
@@ -30,8 +30,8 @@ def _get_video_path(config):
 
 def _show_first_run_setup(current_key):
     """Show first-run dialog for API key and ComfyUI setup. Returns (possibly updated) api_key."""
-    from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout
-    from PyQt5.QtCore import Qt
+    from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout
+    from PySide6.QtCore import Qt
 
     dlg = QDialog()
     dlg.setWindowTitle("欢迎使用 FaceDoodle — 首次设置")
@@ -41,13 +41,13 @@ def _show_first_run_setup(current_key):
     layout.setSpacing(14)
 
     title = QLabel("欢迎使用 FaceDoodle AI 贴纸工坊")
-    title.setAlignment(Qt.AlignCenter)
+    title.setAlignment(Qt.AlignmentFlag.AlignCenter)
     title.setStyleSheet("font-size: 16px; font-weight: 700; color: #333;")
     layout.addWidget(title)
 
     desc = QLabel("首次运行需要配置 API Key 和 ComfyUI 地址。\n这些设置之后也可以在应用内修改。")
     desc.setWordWrap(True)
-    desc.setAlignment(Qt.AlignCenter)
+    desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
     desc.setStyleSheet("color: #888; font-size: 12px; margin-bottom: 8px;")
     layout.addWidget(desc)
 
@@ -56,7 +56,7 @@ def _show_first_run_setup(current_key):
 
     key_edit = QLineEdit(current_key or "")
     key_edit.setPlaceholderText("sk-...")
-    key_edit.setEchoMode(QLineEdit.Password)
+    key_edit.setEchoMode(QLineEdit.EchoMode.Password)
     form.addRow("DeepSeek API Key", key_edit)
 
     addr_edit = QLineEdit("127.0.0.1:8188")
@@ -110,7 +110,7 @@ def _show_first_run_setup(current_key):
     save_btn.clicked.connect(on_save)
     key_edit.returnPressed.connect(on_save)
 
-    result = dlg.exec_()
+    result = dlg.exec()
     if result == QDialog.Accepted:
         return _resolve_api_key(get_config())
     return current_key
@@ -198,7 +198,7 @@ def main():
     window.resize(w, h)
     window.show()
 
-    exit_code = app.exec_()
+    exit_code = app.exec()
 
     log.info("正在关闭系统，清理子进程...")
     stop_event.set()

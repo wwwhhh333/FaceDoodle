@@ -405,7 +405,6 @@ flowchart TD
 
 | 文档 | 责任人 | 更新时机 |
 |------|:------:|---------|
-| CLAUDE.md | 质量责任人 | 每次重大变更后 |
 | README.md | 质量责任人 | 功能新增/移除后 |
 | RISK_MANAGEMENT_PLAN | 质量责任人 | 每迭代结束 |
 | QUALITY_PLAN.md | 质量责任人 | 每迭代或重大变更后 |
@@ -498,7 +497,6 @@ flowchart TD
 | Python 语法检查 | 每次提交前 | `scripts/check_syntax.py` | 责任人 + pre-commit |
 | 单元测试 | 每次提交前 | `pytest tests/ -v` | 责任人 + pre-commit |
 | 运行时烟雾测试 | 非平凡变更后 | `python app/main.py --mock` | 责任人 |
-| 代码自审 | 3+ 文件变更前 | CLAUDE.md 工作流 | 责任人 |
 
 #### 迭代阶段（功能完成时）
 

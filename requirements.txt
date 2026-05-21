@@ -10,6 +10,6 @@ torch
 torchvision
 websockets
 aiohttp
-PyQt5
+PySide6
 python-multipart
 rembg

@@ -5,11 +5,11 @@ import numpy as np
 import os
 import subprocess
 
-from PyQt5.QtWidgets import (QWidget, QLabel, QLineEdit, QPushButton,
+from PySide6.QtWidgets import (QWidget, QLabel, QLineEdit, QPushButton,
                              QHBoxLayout, QVBoxLayout, QSlider, QColorDialog,
                              QComboBox, QDialog, QGridLayout, QScrollArea)
-from PyQt5.QtGui import QPainter, QColor, QPen, QImage, QPixmap
-from PyQt5.QtCore import Qt, QTimer, QEvent
+from PySide6.QtGui import QPainter, QColor, QPen, QImage, QPixmap
+from PySide6.QtCore import Qt, QTimer, QEvent
 
 from app.core.brush import BrushStateMixin, load_brush_config, stamp_brush, stamp_line
 from app.core.protocol import CmdImg2Img, GalLoadSticker
@@ -28,7 +28,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
         self.setMinimumSize(400, 400)
         self.setMaximumSize(2400, 2400)
         self.resize(self.CANVAS_SIZE, self.CANVAS_SIZE)
-        self.setCursor(Qt.CrossCursor)
+        self.setCursor(Qt.CursorShape.CrossCursor)
         self.setMouseTracking(True)
 
         self._drawing = np.zeros((self.CANVAS_SIZE, self.CANVAS_SIZE, 4), dtype=np.uint8)
@@ -47,7 +47,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
 
         self._checker = self._make_checkerboard()
         self.setTabletTracking(True)
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def _make_checkerboard(self):
         grid = 8
@@ -127,7 +127,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
         if self._mirror_mode:
             c = QColor(PRIMARY)
             c.setAlpha(180)
-            pen = QPen(c, 1, Qt.DashLine)
+            pen = QPen(c, 1, Qt.PenStyle.DashLine)
             painter.setPen(pen)
             cx = ox + draw_size // 2
             painter.drawLine(cx, oy, cx, oy + draw_size)
@@ -176,11 +176,11 @@ class DrawingCanvas(QWidget, BrushStateMixin):
                        eraser=self._eraser_mode)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and not self._tablet_in_use:
+        if event.button() == Qt.MouseButton.LeftButton and not self._tablet_in_use:
             if self._space_held:
                 self._panning = True
                 self._pan_start = event.globalPos()
-                self.setCursor(Qt.ClosedHandCursor)
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
             else:
                 self._push_undo()
                 self._drawing_active = True
@@ -203,7 +203,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
             self.update()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             if self._panning:
                 self._panning = False
                 self._pan_start = None
@@ -217,20 +217,20 @@ class DrawingCanvas(QWidget, BrushStateMixin):
 
     def _update_cursor(self):
         if self._space_held:
-            self.setCursor(Qt.OpenHandCursor)
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
         else:
-            self.setCursor(Qt.CrossCursor)
+            self.setCursor(Qt.CursorShape.CrossCursor)
 
     def tabletEvent(self, event):
         t = event.type()
         if self._space_held:
-            if t == QEvent.TabletPress:
+            if t == QEvent.Type.TabletPress:
                 self._tablet_in_use = True
                 self._panning = True
                 self._pan_start = event.globalPos()
-                self.setCursor(Qt.ClosedHandCursor)
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
                 event.accept()
-            elif t == QEvent.TabletMove and self._panning:
+            elif t == QEvent.Type.TabletMove and self._panning:
                 delta = event.globalPos() - self._pan_start
                 self._pan_start = event.globalPos()
                 if self._scroll_area:
@@ -239,14 +239,14 @@ class DrawingCanvas(QWidget, BrushStateMixin):
                     self._scroll_area.verticalScrollBar().setValue(
                         self._scroll_area.verticalScrollBar().value() - delta.y())
                 event.accept()
-            elif t == QEvent.TabletRelease:
+            elif t == QEvent.Type.TabletRelease:
                 self._panning = False
                 self._pan_start = None
                 self._tablet_in_use = False
                 self._update_cursor()
                 event.accept()
             return
-        if t == QEvent.TabletPress:
+        if t == QEvent.Type.TabletPress:
             self._tablet_in_use = True
             self.set_pressure(event.pressure())
             self._push_undo()
@@ -255,7 +255,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
             self._draw_stroke(event.pos(), event.pos())
             self.update()
             event.accept()
-        elif t == QEvent.TabletMove and self._tablet_in_use:
+        elif t == QEvent.Type.TabletMove and self._tablet_in_use:
             self.set_pressure(event.pressure())
             if event.pressure() > 0 and self._drawing_active and self._last_pos is not None:
                 self._draw_stroke(self._last_pos, event.pos())
@@ -266,7 +266,7 @@ class DrawingCanvas(QWidget, BrushStateMixin):
                 self._last_pos = None
                 self._tablet_in_use = False
             event.accept()
-        elif t == QEvent.TabletRelease:
+        elif t == QEvent.Type.TabletRelease:
             self._drawing_active = False
             self._last_pos = None
             self._tablet_in_use = False
@@ -290,14 +290,14 @@ class DrawingCanvas(QWidget, BrushStateMixin):
         self.update()
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._space_held = True
             self._update_cursor()
         else:
             super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
-        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._space_held = False
             self._update_cursor()
         else:
@@ -311,7 +311,7 @@ class DrawingDialog(QDialog):
         self.command_queue = command_queue
         self.setWindowTitle("绘制贴纸")
         self.resize(1100, 720)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint)
         self.setStyleSheet(f"""
             QDialog {{ background: {CANVAS}; }}
             QLabel {{ color: {INK}; {font_css('caption')} }}
@@ -395,7 +395,7 @@ class DrawingDialog(QDialog):
         left_layout.addWidget(size_label)
         size_row = QHBoxLayout()
         size_row.setSpacing(6)
-        self.size_slider = QSlider(Qt.Horizontal)
+        self.size_slider = QSlider(Qt.Orientation.Horizontal)
         self.size_slider.setRange(1, 50)
         self.size_slider.setValue(12)
         self.size_slider.valueChanged.connect(lambda v: self.canvas.set_brush_size(v))
@@ -413,7 +413,7 @@ class DrawingDialog(QDialog):
         left_layout.addWidget(spacing_label)
         spacing_row = QHBoxLayout()
         spacing_row.setSpacing(6)
-        self.spacing_slider = QSlider(Qt.Horizontal)
+        self.spacing_slider = QSlider(Qt.Orientation.Horizontal)
         self.spacing_slider.setRange(3, 200)
         self.spacing_slider.setValue(30)
         self.spacing_slider.valueChanged.connect(self._on_spacing_changed)
@@ -430,7 +430,7 @@ class DrawingDialog(QDialog):
         left_layout.addWidget(scatter_label)
         scatter_row = QHBoxLayout()
         scatter_row.setSpacing(6)
-        self.scatter_slider = QSlider(Qt.Horizontal)
+        self.scatter_slider = QSlider(Qt.Orientation.Horizontal)
         self.scatter_slider.setRange(0, 30)
         self.scatter_slider.setValue(0)
         self.scatter_slider.valueChanged.connect(self._on_scatter_changed)
@@ -452,7 +452,7 @@ class DrawingDialog(QDialog):
         for i, (name, bgra) in enumerate(PRESET_COLORS):
             btn = QPushButton()
             btn.setFixedSize(26, 26)
-            btn.setCursor(Qt.PointingHandCursor)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(name)
             r, g, b, a = bgra[2], bgra[1], bgra[0], bgra[3]
             btn.setStyleSheet(
@@ -464,7 +464,7 @@ class DrawingDialog(QDialog):
 
         custom_btn = QPushButton("+")
         custom_btn.setFixedSize(26, 26)
-        custom_btn.setCursor(Qt.PointingHandCursor)
+        custom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         custom_btn.setToolTip("自定义颜色")
         custom_btn.setStyleSheet(f"QPushButton {{ background: {CANVAS}; border: 2px dashed {INK_MUTED_48}; font-size: 13px; border-radius: {ROUNDED['full']}; }}")
         custom_btn.clicked.connect(self._pick_custom_color)
@@ -483,7 +483,7 @@ class DrawingDialog(QDialog):
         canvas_scroll.setStyleSheet(f"QScrollArea {{ background: {CANVAS}; border: 1px solid {HAIRLINE}; border-radius: {ROUNDED['sm']}; }}")
         canvas_scroll.setWidgetResizable(False)
         canvas_scroll.setWidget(self.canvas)
-        canvas_scroll.setAlignment(Qt.AlignCenter)
+        canvas_scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.canvas.set_scroll_area(canvas_scroll)
         body_row.addWidget(canvas_scroll, stretch=1)
 
@@ -589,7 +589,7 @@ class DrawingDialog(QDialog):
         params_row.setSpacing(8)
 
         params_row.addWidget(QLabel("ControlNet:"))
-        self.cn_slider = QSlider(Qt.Horizontal)
+        self.cn_slider = QSlider(Qt.Orientation.Horizontal)
         self.cn_slider.setRange(0, 100)
         self.cn_slider.setValue(85)
         self.cn_slider.setFixedWidth(100)
@@ -600,7 +600,7 @@ class DrawingDialog(QDialog):
         params_row.addWidget(self.cn_value_label)
 
         params_row.addWidget(QLabel("降噪:"))
-        self.denoise_slider = QSlider(Qt.Horizontal)
+        self.denoise_slider = QSlider(Qt.Orientation.Horizontal)
         self.denoise_slider.setRange(5, 100)
         self.denoise_slider.setValue(100)
         self.denoise_slider.setFixedWidth(100)
@@ -629,7 +629,7 @@ class DrawingDialog(QDialog):
 
         hint_label = QLabel("B 画笔  E 橡皮  M 镜像  Ctrl+Z 撤销  [ ] 大小")
         hint_label.setStyleSheet(f"color: {INK_MUTED_48}; {font_css('fine-print')} background: transparent; border: none;")
-        hint_label.setAlignment(Qt.AlignCenter)
+        hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         bottom_layout.addWidget(hint_label)
 
         root_layout.addWidget(bottom_widget)
@@ -679,25 +679,25 @@ class DrawingDialog(QDialog):
         key = event.key()
         mods = event.modifiers()
 
-        if key == Qt.Key_B:
+        if key == Qt.Key.Key_B:
             self._set_brush_mode()
-        elif key == Qt.Key_E:
+        elif key == Qt.Key.Key_E:
             self._set_eraser_mode()
-        elif key == Qt.Key_M:
+        elif key == Qt.Key.Key_M:
             self._toggle_mirror()
-        elif key == Qt.Key_Z and mods == Qt.ControlModifier:
+        elif key == Qt.Key.Key_Z and mods == Qt.KeyboardModifier.ControlModifier:
             self.canvas.undo()
-        elif key == Qt.Key_BracketLeft:
+        elif key == Qt.Key.Key_BracketLeft:
             self.canvas.decrease_brush()
             self.size_slider.setValue(self.canvas._brush_size)
-        elif key == Qt.Key_BracketRight:
+        elif key == Qt.Key.Key_BracketRight:
             self.canvas.increase_brush()
             self.size_slider.setValue(self.canvas._brush_size)
         else:
             super().keyPressEvent(event)
 
     def _import_image(self):
-        from PyQt5.QtWidgets import QFileDialog
+        from PySide6.QtWidgets import QFileDialog
         from app.utils.image_proc import load_rgba_sticker
         path, _ = QFileDialog.getOpenFileName(
             self, "导入图片", "",
@@ -710,7 +710,7 @@ class DrawingDialog(QDialog):
             self.canvas.load_image(sticker)
 
     def _export_image(self):
-        from PyQt5.QtWidgets import QFileDialog
+        from PySide6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getSaveFileName(
             self, "导出贴纸", "sticker.png",
             "PNG (*.png);;所有文件 (*.*)"
@@ -747,7 +747,7 @@ class DrawingDialog(QDialog):
             else:
                 os.startfile(self._ext_file_path)
         except Exception as e:
-            from PyQt5.QtWidgets import QMessageBox
+            from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "启动失败",
                 f"无法启动外部编辑器。\n\n请确认已安装 PS/SAI2 等软件，"
                 f"或在 config.json 中设置 external_editor.path。\n\n错误: {e}")

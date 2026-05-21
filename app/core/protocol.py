@@ -6,7 +6,7 @@ and ``isinstance`` replaces stringly-typed ``msg.get("action")`` checks.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Action constants (for code that still needs string matching)
@@ -448,3 +448,35 @@ class CmdImg2Img:
     display_name: str = ""
     controlnet_strength: float = 0.85
     denoise: float = 1.0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Domain model types (shared across ConsumerProcessor, mixins, and tests)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class Adjustment:
+    """Manual edit state bound to a StickerInstance."""
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    rotation: float = 0.0
+    scale_mult: float = 1.0
+
+
+@dataclass
+class StickerInstance:
+    """An active sticker placed on the face, with placement and animation metadata.
+
+    Replaces the bare ``dict`` previously used in ``self.active_stickers``.
+    """
+    instance_id: str
+    sticker_id: str = ""
+    sticker: Any = None        # np.ndarray — BGRA image
+    location: str = "forehead_top"
+    scale: float = 1.0
+    prompt: str = ""
+    is_animated: bool = False
+    frame_count: int = 0
+    frame_cols: int = 0
+    frame_rows: int = 0
+    fps: int = 8

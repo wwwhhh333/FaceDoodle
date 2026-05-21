@@ -3,20 +3,21 @@ import os
 import sys
 import cv2
 import numpy as np
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QFormLayout, QGroupBox, QLabel, QLineEdit, QPushButton,
-                             QShortcut, QMessageBox, QFileDialog, QDialog, QComboBox,
+                             QMessageBox, QFileDialog, QDialog, QComboBox,
                              QSlider, QCheckBox, QSpinBox, QDoubleSpinBox, QSplitter,
                              QSizePolicy, QProgressBar)
-from PyQt5.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor
-from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer, QEvent
+from PySide6.QtGui import QImage, QPixmap, QKeySequence, QPainter, QColor, QShortcut
+from PySide6.QtCore import QThread, Signal, Qt, QTimer, QEvent
 
 from app.ui.widgets import (ThumbnailCard, StyledButton, GradientBar,
                             GalleryScrollArea, REGION_OPTIONS, PRESET_COLORS)
 from app.ui.theme import (PRIMARY, CANVAS, PARCHMENT, INK,
                           INK_MUTED_48, INK_MUTED_80, HAIRLINE,
                           DESTRUCTIVE, font_css, ROUNDED, rgba,
-                          global_stylesheet)
+                          global_stylesheet, pill_button_style,
+                          ghost_pill_button_style)
 from app.ui.drawing_widgets import DrawingDialog
 from app.ui.sticker_panel import ActiveStickersPanel
 from app.ui.animation_timeline import AnimationTimeline
@@ -43,17 +44,17 @@ log = logging.getLogger(__name__)
 
 
 class VideoUpdateThread(QThread):
-    change_pixmap_signal = pyqtSignal(np.ndarray)
-    sticker_saved_signal = pyqtSignal(str)
-    generation_failed_signal = pyqtSignal(str)
-    active_stickers_signal = pyqtSignal(object)
-    gen_progress_signal = pyqtSignal(object)
-    agent_message_signal = pyqtSignal(str)
-    agent_question_signal = pyqtSignal(str)
-    anim_export_progress_signal = pyqtSignal(object)
-    anim_clip_updated_signal = pyqtSignal(object)
-    anim_playback_state_signal = pyqtSignal(object)
-    anim_gen_progress_signal = pyqtSignal(object)
+    change_pixmap_signal = Signal(np.ndarray)
+    sticker_saved_signal = Signal(str)
+    generation_failed_signal = Signal(str)
+    active_stickers_signal = Signal(object)
+    gen_progress_signal = Signal(object)
+    agent_message_signal = Signal(str)
+    agent_question_signal = Signal(str)
+    anim_export_progress_signal = Signal(object)
+    anim_clip_updated_signal = Signal(object)
+    anim_playback_state_signal = Signal(object)
+    anim_gen_progress_signal = Signal(object)
 
     def __init__(self, display_queue, gallery_queue):
         super().__init__()
@@ -187,7 +188,7 @@ class FaceDoodleWindow(QMainWindow):
 
         self.comfy_btn = QPushButton("ComfyUI")
         self.comfy_btn.setFixedHeight(28)
-        self.comfy_btn.setCursor(Qt.PointingHandCursor)
+        self.comfy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.comfy_btn.clicked.connect(self._on_comfy_toggle)
         self._comfy_connected = False
         self._comfy_check_timer = QTimer(self)
@@ -198,7 +199,7 @@ class FaceDoodleWindow(QMainWindow):
 
         settings_btn = QPushButton("⚙")
         settings_btn.setFixedSize(36, 36)
-        settings_btn.setCursor(Qt.PointingHandCursor)
+        settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         settings_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; color: {INK_MUTED_80}; border: none;
@@ -216,7 +217,7 @@ class FaceDoodleWindow(QMainWindow):
             f"QSplitter::handle {{ background: {rgba(INK, 0.08)}; }}"
             f"QSplitter::handle:hover {{ background: {rgba(PRIMARY, 0.3)}; }}"
         )
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(2)
         splitter.setStyleSheet(_splitter_style)
 
@@ -229,7 +230,7 @@ class FaceDoodleWindow(QMainWindow):
         lp_layout.setSpacing(4)
 
         left_title = QLabel("面部\n贴纸")
-        left_title.setAlignment(Qt.AlignCenter)
+        left_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         left_title.setStyleSheet(
             f"color: {INK_MUTED_48}; {font_css('caption-strong')} background: transparent; border: none; padding-bottom: 4px;"
         )
@@ -246,7 +247,7 @@ class FaceDoodleWindow(QMainWindow):
         splitter.addWidget(left_panel)
 
         self.video_label = QLabel()
-        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setStyleSheet(f"background: {CANVAS}; border: none;")
         self.video_label.setMinimumSize(640, 400)
         self.video_label.setMouseTracking(True)
@@ -268,7 +269,7 @@ class FaceDoodleWindow(QMainWindow):
         for key, label in [("templates", "模板"), ("stickers", "贴纸"), ("favorites", "收藏")]:
             btn = QPushButton(label)
             btn.setCheckable(True)
-            btn.setCursor(Qt.PointingHandCursor)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {INK_MUTED_48};
@@ -305,7 +306,7 @@ class FaceDoodleWindow(QMainWindow):
         splitter.addWidget(right_panel)
         splitter.setSizes([100, 800, 210])
         # ── 底部区域（可拖拽） ──
-        v_splitter = QSplitter(Qt.Vertical)
+        v_splitter = QSplitter(Qt.Orientation.Vertical)
         v_splitter.setHandleWidth(2)
         v_splitter.setStyleSheet(_splitter_style)
 
@@ -321,7 +322,7 @@ class FaceDoodleWindow(QMainWindow):
             f"color: {PRIMARY}; background: {CANVAS}; {font_css('caption')} "
             f"padding: 6px 14px; border: 1px solid {PRIMARY}; border-radius: {ROUNDED['pill']};"
         )
-        self.edit_indicator.setAlignment(Qt.AlignCenter)
+        self.edit_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.edit_indicator.setVisible(False)
 
         # ── Animation timeline ──
@@ -357,7 +358,7 @@ class FaceDoodleWindow(QMainWindow):
 
         self.manage_presets_btn = QPushButton("管理")
         self.manage_presets_btn.setFixedHeight(28)
-        self.manage_presets_btn.setCursor(Qt.PointingHandCursor)
+        self.manage_presets_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.manage_presets_btn.setStyleSheet(
             f"QPushButton {{ color: {INK_MUTED_80}; background: {PARCHMENT}; "
             f"border: 1px solid {HAIRLINE}; border-radius: 5px; "
@@ -369,7 +370,7 @@ class FaceDoodleWindow(QMainWindow):
 
         self.symmetry_check = QCheckBox("对称模式")
         self.symmetry_check.setToolTip("启用后在提示词中添加对称性关键词")
-        self.symmetry_check.setCursor(Qt.PointingHandCursor)
+        self.symmetry_check.setCursor(Qt.CursorShape.PointingHandCursor)
         self.symmetry_check.setStyleSheet(f"QCheckBox {{ {font_css('body')} }}")
         self.symmetry_check.stateChanged.connect(self._on_symmetry_toggled)
         input_layout.addWidget(self.symmetry_check)
@@ -480,7 +481,7 @@ class FaceDoodleWindow(QMainWindow):
         self.status_label.setStyleSheet(
             f"color: {INK_MUTED_48}; {font_css('fine-print')} padding: 5px; background: {CANVAS}; border-top: 1px solid {HAIRLINE};"
         )
-        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         status_layout.addWidget(self.status_label)
 
         root.addWidget(status_container)
@@ -537,7 +538,7 @@ class FaceDoodleWindow(QMainWindow):
         size_label.setStyleSheet(label_style)
         tb_layout.addWidget(size_label)
 
-        self._draw_brush_slider = QSlider(Qt.Horizontal)
+        self._draw_brush_slider = QSlider(Qt.Orientation.Horizontal)
         self._draw_brush_slider.setRange(1, 50)
         self._draw_brush_slider.setValue(12)
         self._draw_brush_slider.setFixedWidth(100)
@@ -555,7 +556,7 @@ class FaceDoodleWindow(QMainWindow):
         spacing_label.setStyleSheet(label_style)
         tb_layout.addWidget(spacing_label)
 
-        self._draw_spacing_slider = QSlider(Qt.Horizontal)
+        self._draw_spacing_slider = QSlider(Qt.Orientation.Horizontal)
         self._draw_spacing_slider.setRange(3, 200)
         self._draw_spacing_slider.setValue(30)
         self._draw_spacing_slider.setFixedWidth(80)
@@ -573,7 +574,7 @@ class FaceDoodleWindow(QMainWindow):
         scatter_label.setStyleSheet(label_style)
         tb_layout.addWidget(scatter_label)
 
-        self._draw_scatter_slider = QSlider(Qt.Horizontal)
+        self._draw_scatter_slider = QSlider(Qt.Orientation.Horizontal)
         self._draw_scatter_slider.setRange(0, 30)
         self._draw_scatter_slider.setValue(0)
         self._draw_scatter_slider.setFixedWidth(80)
@@ -594,7 +595,7 @@ class FaceDoodleWindow(QMainWindow):
         for name, bgra in PRESET_COLORS:
             btn = QPushButton()
             btn.setFixedSize(22, 22)
-            btn.setCursor(Qt.PointingHandCursor)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(name)
             r, g, b = bgra[2], bgra[1], bgra[0]
             btn.setStyleSheet(
@@ -927,14 +928,14 @@ class FaceDoodleWindow(QMainWindow):
         layout.addLayout(btn_layout)
         ok_btn.clicked.connect(dlg.accept)
         cancel_btn.clicked.connect(dlg.reject)
-        if dlg.exec_() == QDialog.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             return combo.currentData(), True
         return None, False
 
     def _open_drawing_dialog(self):
         dlg = DrawingDialog(self, self.gallery_queue, self.command_queue)
         dlg.showMaximized()
-        if dlg.exec_() == DrawingDialog.Accepted:
+        if dlg.exec() == DrawingDialog.Accepted:
             self._load_gallery()
 
     def _open_edit_sticker_dialog(self):
@@ -947,7 +948,7 @@ class FaceDoodleWindow(QMainWindow):
             return
         dlg = DrawingDialog(self, self.gallery_queue, self.command_queue, initial_sticker=sticker_img)
         dlg.showMaximized()
-        if dlg.exec_() == DrawingDialog.Accepted:
+        if dlg.exec() == DrawingDialog.Accepted:
             self._load_gallery()
 
     def _populate_style_combo(self):
@@ -1019,7 +1020,7 @@ class FaceDoodleWindow(QMainWindow):
     def _on_manage_presets(self):
         from app.ui.style_preset_manager_dialog import StylePresetManagerDialog
         dlg = StylePresetManagerDialog(self)
-        dlg.exec_()
+        dlg.exec()
         # Re-populate combo to reflect add/delete/rename changes
         self._populate_style_combo()
         # Re-apply LoRA for the (possibly different) current selection
@@ -1097,16 +1098,17 @@ class FaceDoodleWindow(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("设置")
-        dlg.setMinimumWidth(420)
+        dlg.setMinimumWidth(440)
         dlg.setStyleSheet(global_stylesheet())
 
         layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
 
         # ── ComfyUI ──
         grp_comfy = QGroupBox("ComfyUI")
         form_comfy = QFormLayout(grp_comfy)
+        form_comfy.setSpacing(10)
         addr_edit = QLineEdit(cfg["comfyui"]["server_address"])
         addr_edit.setPlaceholderText("127.0.0.1:8188")
         form_comfy.addRow("服务器地址", addr_edit)
@@ -1123,6 +1125,7 @@ class FaceDoodleWindow(QMainWindow):
         # ── AI ──
         grp_ai = QGroupBox("AI 模型")
         form_ai = QFormLayout(grp_ai)
+        form_ai.setSpacing(10)
         model_combo = QComboBox()
         model_combo.setEditable(True)
         model_combo.addItems(["deepseek-chat", "deepseek-reasoner"])
@@ -1134,6 +1137,7 @@ class FaceDoodleWindow(QMainWindow):
         # ── LoRA ──
         grp_lora = QGroupBox("LoRA")
         form_lora = QFormLayout(grp_lora)
+        form_lora.setSpacing(10)
         lora_edit = QLineEdit(cfg["model"]["lora"]["name"])
         lora_edit.setPlaceholderText("xxx.safetensors")
         form_lora.addRow("名称", lora_edit)
@@ -1152,6 +1156,7 @@ class FaceDoodleWindow(QMainWindow):
         # ── 生成 ──
         grp_gen = QGroupBox("生成")
         form_gen = QFormLayout(grp_gen)
+        form_gen.setSpacing(10)
         sym_cb = QCheckBox("开启对称构图")
         sym_cb.setChecked(cfg.get("generation", {}).get("symmetry_enabled", False))
         form_gen.addRow("", sym_cb)
@@ -1170,18 +1175,17 @@ class FaceDoodleWindow(QMainWindow):
 
         # ── 按钮 ──
         btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 4, 0, 0)
         btn_layout.addStretch()
         cancel_btn = QPushButton("取消")
         cancel_btn.setFixedWidth(80)
+        cancel_btn.setStyleSheet(ghost_pill_button_style())
         cancel_btn.clicked.connect(dlg.reject)
         btn_layout.addWidget(cancel_btn)
         save_btn = QPushButton("保存")
         save_btn.setFixedWidth(80)
-        save_btn.setStyleSheet(
-            f"QPushButton {{ background: {PRIMARY}; color: #fff; border: none; "
-            f"border-radius: {ROUNDED['sm']}; padding: 6px 14px; font-weight: 600; }}"
-            f"QPushButton:hover {{ opacity: 0.9; }}"
-        )
+        save_btn.setStyleSheet(pill_button_style())
+        save_btn.clicked.connect(lambda: on_save())
         btn_layout.addWidget(save_btn)
         layout.addLayout(btn_layout)
 
@@ -1200,7 +1204,7 @@ class FaceDoodleWindow(QMainWindow):
             dlg.accept()
 
         save_btn.clicked.connect(on_save)
-        dlg.exec_()
+        dlg.exec()
 
     # ── 编辑模式 ──
 
@@ -1317,7 +1321,7 @@ class FaceDoodleWindow(QMainWindow):
         sid = next(iter(self._gallery_selected_ids))
         dlg = AnimationGenDialog(sid, self)
         self._ai_anim_dlg = dlg
-        if dlg.exec_() == QDialog.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             params = dlg.result()
             self.animation_queue.put(AnimGenTexture(
                 sticker_id=params["sticker_id"],
@@ -1363,11 +1367,11 @@ class FaceDoodleWindow(QMainWindow):
     def eventFilter(self, obj, event):
         if obj is self.video_label:
             t = event.type()
-            if t == QEvent.MouseButtonDblClick:
+            if t == QEvent.Type.MouseButtonDblClick:
                 self._on_double_click(event)
                 return True
             if self._edit_mode:
-                if t == QEvent.MouseButtonPress:
+                if t == QEvent.Type.MouseButtonPress:
                     self._on_mouse_press(event)
                     return True
                 elif t == QEvent.MouseMove:
@@ -1380,23 +1384,23 @@ class FaceDoodleWindow(QMainWindow):
                     self._on_wheel(event)
                     return True
             elif self._face_draw_mode:
-                if t == QEvent.TabletPress:
+                if t == QEvent.Type.TabletPress:
                     self._tablet_in_use = True
                     self._handle_draw_press(event.pos(), event.pressure())
                     return True
-                elif t == QEvent.TabletMove and self._tablet_in_use:
+                elif t == QEvent.Type.TabletMove and self._tablet_in_use:
                     if event.pressure() > 0:
                         self._handle_draw_move(event.pos(), event.pressure())
                     else:
                         self._handle_draw_release()
                         self._tablet_in_use = False
                     return True
-                elif t == QEvent.TabletRelease:
+                elif t == QEvent.Type.TabletRelease:
                     self._handle_draw_release()
                     self._tablet_in_use = False
                     return True
                 elif not self._tablet_in_use:
-                    if t == QEvent.MouseButtonPress:
+                    if t == QEvent.Type.MouseButtonPress:
                         self._on_draw_mouse_press(event)
                         return True
                     elif t == QEvent.MouseMove:
@@ -1411,7 +1415,7 @@ class FaceDoodleWindow(QMainWindow):
         self._mouse_down = True
         self._mouse_button = event.button()
         self._last_mouse_pos = event.pos()
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             fx, fy = self._label_to_frame_coord(event.pos())
             target = self._find_sticker_at(fx, fy)
             if target and target != self._edit_target_id:
@@ -1425,7 +1429,7 @@ class FaceDoodleWindow(QMainWindow):
         dy_px = event.pos().y() - self._last_mouse_pos.y()
         self._last_mouse_pos = event.pos()
         dx_f, dy_f = self._label_to_frame_delta(dx_px, dy_px)
-        if self._mouse_button == Qt.LeftButton:
+        if self._mouse_button == Qt.MouseButton.LeftButton:
             self.adjustment_queue.put(AdjMove(dx=dx_f, dy=dy_f))
         elif self._mouse_button == Qt.RightButton:
             self.adjustment_queue.put(AdjRotate(d_angle=dx_f * 0.3))
@@ -1518,7 +1522,7 @@ class FaceDoodleWindow(QMainWindow):
             self.draw_queue.put(DrawStrokeEnd())
 
     def _on_draw_mouse_press(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._face_draw_mouse_down = True
             self._face_draw_stroke_points = []
             fx, fy = self._label_point_to_frame(event.pos())
@@ -1534,7 +1538,7 @@ class FaceDoodleWindow(QMainWindow):
         self.draw_queue.put(DrawStrokePoint(point=(fx, fy)))
 
     def _on_draw_mouse_release(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._face_draw_mouse_down = False
             self._face_draw_stroke_points = []
             self.draw_queue.put(DrawStrokeEnd())

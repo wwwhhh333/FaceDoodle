@@ -1,7 +1,7 @@
-from PyQt5.QtWidgets import (QWidget, QLabel, QPushButton, QScrollArea,
+from PySide6.QtWidgets import (QWidget, QLabel, QPushButton, QScrollArea,
                              QHBoxLayout, QVBoxLayout, QSizePolicy, QLayout)
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import Qt, pyqtSignal, QRect, QSize
+from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtCore import Qt, Signal, QRect, QSize
 import numpy as np
 
 from app.ui.theme import (PRIMARY, CANVAS, PARCHMENT, INK,
@@ -27,7 +27,7 @@ def _bgra_to_qpixmap(bgra):
 
 
 class ThumbnailCard(QWidget):
-    clicked = pyqtSignal(str)  # sticker_id
+    clicked = Signal(str)  # sticker_id
 
     def __init__(self, sticker_id, thumb_bgra, prompt, is_favorite=False, parent=None, is_animated=False):
         super().__init__(parent)
@@ -37,7 +37,7 @@ class ThumbnailCard(QWidget):
         self._fav = is_favorite
         self._animated = is_animated
         self.setFixedSize(100, 120)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -45,7 +45,7 @@ class ThumbnailCard(QWidget):
 
         self.thumb_label = QLabel()
         self.thumb_label.setFixedSize(96, 96)
-        self.thumb_label.setAlignment(Qt.AlignCenter)
+        self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.thumb_label.setStyleSheet(
             f"background: {DIVIDER_SOFT}; border: 2px solid {HAIRLINE}; border-radius: {ROUNDED['xs']};"
         )
@@ -55,7 +55,7 @@ class ThumbnailCard(QWidget):
                 self.thumb_label.setPixmap(
                     pix.scaled(92, 92, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 )
-        layout.addWidget(self.thumb_label, alignment=Qt.AlignCenter)
+        layout.addWidget(self.thumb_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.fav_star = QLabel("★", self)
         self.fav_star.setStyleSheet(f"color: {PRIMARY}; font-size: 14px; background: transparent; border: none;")
@@ -69,7 +69,7 @@ class ThumbnailCard(QWidget):
 
         label_text = prompt[:10] + ".." if len(prompt) > 10 else prompt
         self.name_label = QLabel(label_text)
-        self.name_label.setAlignment(Qt.AlignCenter)
+        self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.name_label.setStyleSheet(
             f"color: {INK_MUTED_80}; {font_css('caption')} background: transparent; border: none;"
         )
@@ -95,7 +95,7 @@ class ThumbnailCard(QWidget):
         )
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.sticker_id)
 
 
@@ -123,7 +123,7 @@ class StyledButton(QPushButton):
     def __init__(self, text, preset="primary", parent=None):
         super().__init__(text, parent)
         self._init_presets()
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(StyledButton.PRESETS.get(preset, StyledButton.PRESETS['primary']))
 
 
@@ -160,8 +160,8 @@ GradientBar = TitleBar
 
 
 class GallerySectionHeader(QWidget):
-    toggled = pyqtSignal(str, bool)           # section_id, expanded
-    loadGroupRequested = pyqtSignal(str)      # group_id
+    toggled = Signal(str, bool)           # section_id, expanded
+    loadGroupRequested = Signal(str)      # group_id
 
     def __init__(self, section_id, name, count, group_id=None, parent=None):
         super().__init__(parent)
@@ -169,7 +169,7 @@ class GallerySectionHeader(QWidget):
         self.group_id = group_id or ""
         self._expanded = True
         self.setFixedHeight(28)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 4, 4, 4)
@@ -194,7 +194,7 @@ class GallerySectionHeader(QWidget):
         if group_id:
             self._add_btn = QPushButton("+")
             self._add_btn.setFixedSize(22, 20)
-            self._add_btn.setCursor(Qt.PointingHandCursor)
+            self._add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             self._add_btn.setToolTip("整组添加到面部")
             self._add_btn.setStyleSheet(
                 f"QPushButton {{ color: #fff; background: {PRIMARY}; "
@@ -209,7 +209,7 @@ class GallerySectionHeader(QWidget):
 
         self._count_badge = QLabel(str(count))
         self._count_badge.setFixedSize(22, 18)
-        self._count_badge.setAlignment(Qt.AlignCenter)
+        self._count_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._count_badge.setStyleSheet(
             f"color: {INK_MUTED_48}; background: {DIVIDER_SOFT}; border-radius: {ROUNDED['xs']}; "
             f"font-size: 9px; border: none;"
@@ -221,7 +221,7 @@ class GallerySectionHeader(QWidget):
         self._chevron.setText("▾" if expanded else "▸")
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             if self._add_btn and self._add_btn.geometry().contains(event.pos()):
                 super().mousePressEvent(event)
                 return
@@ -235,8 +235,8 @@ class GalleryScrollArea(QScrollArea):
         super().__init__(parent)
         self.setMinimumWidth(140)
         self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setStyleSheet(f"""
             QScrollArea {{ background: transparent; border: none; }}
             QScrollBar:vertical {{
@@ -258,7 +258,7 @@ class GalleryScrollArea(QScrollArea):
         self.layout.setSpacing(6)
 
         self._placeholder = QLabel("还没有贴纸\n输入描述来生成吧")
-        self._placeholder.setAlignment(Qt.AlignCenter)
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setWordWrap(True)
         self._placeholder.setStyleSheet(
             f"color: {INK_MUTED_48}; {font_css('caption')} background: transparent; border: none; padding: 40px 12px;"

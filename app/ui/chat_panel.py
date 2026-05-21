@@ -1,7 +1,7 @@
 """Compact chat message panel — sits above the input row, shows user/agent dialog."""
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QLabel
-from PyQt5.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QLabel
+from PySide6.QtCore import Qt, QTimer
 
 from app.ui.theme import PARCHMENT, INK, PRIMARY, HAIRLINE, font_css, rgba
 
@@ -18,8 +18,8 @@ class ChatMessagePanel(QWidget):
 
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
-        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll.setMaximumHeight(150)
         self._scroll.setStyleSheet(
             f"QScrollArea {{ background: transparent; border: none; }}"
@@ -72,8 +72,8 @@ class ChatMessagePanel(QWidget):
 def _make_bubble(text, is_user):
     label = QLabel(text)
     label.setWordWrap(True)
-    label.setTextFormat(Qt.PlainText)
-    label.setCursor(Qt.PointingHandCursor)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    label.setCursor(Qt.CursorShape.PointingHandCursor)
 
     if is_user:
         bubble_css = f"""
