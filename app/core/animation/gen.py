@@ -106,7 +106,8 @@ def generate_animated_sticker(sticker_bgra, client, motion_prompt,
     rgba_frames = []
     total = len(frame_paths)
     for i, path in enumerate(frame_paths):
-        frame_bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+        raw = np.fromfile(path, dtype=np.uint8)
+        frame_bgr = cv2.imdecode(raw, cv2.IMREAD_COLOR)
         if frame_bgr is None:
             continue
         rgba = _remove_background(frame_bgr)

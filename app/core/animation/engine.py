@@ -85,12 +85,13 @@ class AnimationEngine:
         if not pb or not pb["playing"]:
             return
         now = time.perf_counter()
-        pb["time"] += now - pb["last_tick"]
+        delta = now - pb["last_tick"]
         pb["last_tick"] = now
-
         clip = self.get_bound_clip(instance_id)
-        if clip and clip.loop and clip.duration > 0:
-            pb["time"] %= clip.duration
+        if clip and not clip.loop and clip.duration > 0:
+            pb["time"] = min(pb["time"] + delta, clip.duration)
+        else:
+            pb["time"] += delta
 
     def evaluate(self, instance_id):
         pb = self._playback.get(instance_id)

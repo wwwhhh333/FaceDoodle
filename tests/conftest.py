@@ -3,6 +3,13 @@ import os
 import numpy as np
 import pytest
 
+from app.utils import config_loader as cl
+
+# ── Ensure tests never pollute or auto-reload the real config ──
+cl._config = None
+cl._config_mtime = 0
+cl._AUTO_RELOAD_ENABLED = False
+
 
 @pytest.fixture
 def blank_canvas():

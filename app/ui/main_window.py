@@ -773,11 +773,11 @@ class FaceDoodleWindow(QMainWindow):
             card.set_active(False)
         self.add_to_face_btn.setEnabled(len(self._gallery_selected_ids) > 0)
 
-        # Enable AI Animation only when a single non-template, non-animated sticker is selected
+        # Enable AI Animation only when a single non-animated sticker is selected
         can_animate = False
         if len(self._gallery_selected_ids) == 1:
             sid = next(iter(self._gallery_selected_ids))
-            card = self._gallery_items.get(sid)
+            card = self._gallery_items.get(sid) or self._template_cards.get(sid)
             if card and not card._animated:
                 can_animate = True
         self.ai_anim_btn.setEnabled(can_animate)

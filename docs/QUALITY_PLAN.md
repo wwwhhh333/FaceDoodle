@@ -25,7 +25,7 @@ flowchart LR
     end
     subgraph Consumer["Consumer 进程 (Mixin: StickerManager + AnimationProcessor)"]
         direction TB
-        C1["12 步帧循环"]
+        C1["14 步帧循环"]
         C2["人脸检测<br/>MediaPipe 468"]
         C3["贴纸渲染"]
         C4["AI 调度"]
@@ -53,13 +53,13 @@ Consumer 单帧循环 12 步流水线。7 个多进程队列 + 1 个内部线程
 
 | 层 | 技术 |
 |---|------|
-| UI | PyQt5 |
+| UI | PySide6 |
 | AI 对话 | DeepSeek API（openai 兼容 SDK） |
 | AI 图像 | ComfyUI REST API（SDXL + Layer Diffusion + ControlNet Scribble + AnimateDiff） |
 | 人脸检测 | MediaPipe 468 关键点模型 |
 | 图像处理 | OpenCV、NumPy |
 | 进程通信 | Python multiprocessing.Queue |
-| 测试 | pytest（12 文件，278 用例） |
+| 测试 | pytest（17 文件，401 用例） |
 | 质量关卡 | pre-commit hooks（语法检查 + 测试套件） |
 
 ### 1.4 质量范围
@@ -69,17 +69,18 @@ Consumer 单帧循环 12 步流水线。7 个多进程队列 + 1 个内部线程
 | 模块 | 路径 | 质量重点 | 当前测试覆盖 |
 |------|------|---------|:------------:|
 | AI 对话代理 | `app/ai/agent.py` | 意图解析准确率、关键词降级覆盖率 | 中 |
-| AI 图像生成 | `app/ai/generator.py` | ComfyUI 超时重试、工作流正确性 | **无** |
-| ComfyUI 管理 | `app/ai/comfy_manager.py` | 子进程启动/终止可靠性 | **无** |
+| AI 图像生成 | `app/ai/generator.py` | ComfyUI 超时重试、工作流正确性 | 中 |
+| ComfyUI 管理 | `app/ai/comfy_manager.py` | 子进程启动/终止可靠性 | 低 |
 | 人脸检测 | `app/core/face_mesh.py` | 检测稳定性、中文路径兼容 | 低 |
 | 渲染器 | `app/core/renderer.py` | 贴纸透视变换精度、帧率 | 中 |
-| Consumer 主循环 | `app/core/tracker.py` | 队列调度、竞态条件 | **无** |
-| 贴纸管理 | `app/core/tracker_stickers.py` | 增删改查正确性 | **无** |
+| Consumer 主循环 | `app/core/tracker.py` | 队列调度、竞态条件 | 中 |
+| 贴纸管理 | `app/core/tracker_stickers.py` | 增删改查正确性 | 中 |
 | 动画系统 | `app/core/animation/` | 关键帧插值、导出质量 | 中 |
 | 笔刷引擎 | `app/core/brush.py` | 笔迹渲染精度、压感映射 | 高 |
 | 面部绘制 | `app/core/face_draw.py` | 坐标变换、撤销栈 | 中 |
 | 模板系统 | `app/core/templates.py` | 模板生成完整性 | 中 |
 | 协议通信 | `app/core/protocol.py` | 消息类型完整性 | 高 |
+| 入口 | `app/main.py` | 进程初始化、队列创建 | 中 |
 | UI | `app/ui/` | 事件处理正确性、跨线程安全 | **无** |
 | 配置管理 | `app/utils/config_loader.py` | 配置读/写/合并正确性 | 中 |
 | 图像工具 | `app/utils/image_proc.py` | 中文路径兼容、通道处理 | 低 |
@@ -95,7 +96,7 @@ Consumer 单帧循环 12 步流水线。7 个多进程队列 + 1 个内部线程
 | 语法检查通过率 | 100% | pre-commit hook |
 | 运行时启动成功率 | 100% | 烟雾测试            |
 | AI 生成成功率 | ≥ 90% | 生成结果统计          |
-| AI 关键词降级覆盖率 | 50+ 关键词，12 个面部区域 | `test_agent.py` |
+| AI 关键词降级覆盖率 | 60 个关键词，9 个面部区域 | `test_agent.py` |
 | 渲染帧率 | ≥ 15 FPS（720p） | 运行时监控           |
 | 核心路径崩溃率 | 0 | 长时间运  行观测       |
 | 已知竞态/死锁 | 0 | 压测              |
@@ -159,19 +160,19 @@ Consumer 单帧循环 12 步流水线。7 个多进程队列 + 1 个内部线程
 flowchart TD
     subgraph P1["阶段一：基础保障"]
         direction TB
-        A1["✅ pre-commit hooks<br/>语法 + 测试"] --> A2["✅ pytest 套件<br/>12 文件 278 用例"]
-        A2 --> A3["✅ 部分模块中高覆盖<br/>protocol / brush / renderer / templates"]
-        A3 --> A4["○ 剩余核心模块测试补充"]
+        A1["✅ pre-commit hooks<br/>语法 + 测试"] --> A2["✅ pytest 套件<br/>17 文件 401 用例"]
+        A2 --> A3["✅ 全部核心模块有测试覆盖<br/>protocol / brush / renderer / templates / tracker / generator"]
+        A3 --> A4["○ UI 模块测试补充"]
         style P1 fill:#e8f5e9,stroke:#4caf50
     end
-    subgraph P2["阶段二：覆盖补充  🔵 当前重点"]
+    subgraph P2["阶段二：覆盖补充  ✅ 已完成"]
         direction TB
-        B1["补充 generator.py 测试<br/>ComfyUI mock"]
-        B2["补充 tracker.py 测试<br/>队列模拟"]
-        B3["补充 tracker_stickers.py<br/>tracker_animation.py"]
-        B4["覆盖率提升至 80%+"]
+        B1["✅ generator.py 测试<br/>ComfyUI mock"]
+        B2["✅ tracker.py 测试<br/>队列模拟"]
+        B3["✅ tracker_stickers.py<br/>tracker_animation.py"]
+        B4["✅ 核心模块全覆盖<br/>401 用例"]
         B1 --> B2 --> B3 --> B4
-        style P2 fill:#e3f2fd,stroke:#2196f3
+        style P2 fill:#e8f5e9,stroke:#4caf50
     end
     subgraph P3["阶段三：运行时保障"]
         direction TB
@@ -206,7 +207,7 @@ flowchart TD
 | 工具 | 用途 | 触发方式 |
 |------|------|---------|
 | `scripts/check_syntax.py` | Python 语法编译检查 | pre-commit / 手动 |
-| pytest | 278 用例单元/回归测试 | pre-commit / 手动 |
+| pytest | 401 用例单元/回归测试 | pre-commit / 手动 |
 | pre-commit | Git hooks 编排 | 每次 `git commit` |
 | `logging` 模块 | 全进程日志 | 运行时自动 |
 
@@ -260,7 +261,7 @@ flowchart TD
     S4 -->|通过| S5["5. Git commit<br/>pre-commit 再次验证"]
     S5 -->|失败| FIX4["修复"]
     FIX4 --> S5
-    S5 -->|通过| DONE(["✅ 完成"])
+    S5 -->|通过| DONE(["完成"])
 ```
 
 #### 代码审查标准
@@ -275,7 +276,7 @@ flowchart TD
 
 - [ ] 新增代码有对应测试覆盖
 - [ ] 测试断言具体行为，非实现细节
-- [ ] 现有 278 用例全部通过，无退化
+- [ ] 现有 401 用例全部通过，无退化
 
 #### 文档审查标准
 
@@ -324,13 +325,13 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    A["🔍 发现问题"] --> B["🔄 复现<br/>明确步骤"]
-    B --> C["📋 查日志<br/>logs/error.log"]
-    C --> D["🧪 写最小复现<br/>测试用例"]
-    D --> E["🔧 实现修复"]
-    E --> F["✅ 三关验证<br/>语法→测试→烟雾"]
-    F -->|通过| G["📝 git commit: fix: ..."]
-    G --> H["✔ 关闭"]
+    A["发现问题"] --> B["复现<br/>明确步骤"]
+    B --> C["查日志<br/>logs/error.log"]
+    C --> D["写最小复现<br/>测试用例"]
+    D --> E["实现修复"]
+    E --> F["三关验证<br/>语法→测试→烟雾"]
+    F -->|通过| G["git commit: fix: ..."]
+    G --> H["关闭"]
     F -->|失败| E
 ```
 
@@ -338,11 +339,8 @@ flowchart LR
 
 | 债务项 | 风险 ID | RPN | 当前状态 |
 |--------|:------:|:---:|---------|
-| generator/comfy_manager/tracker 等核心模块无测试 | E1 | 567 | 持续补充中 |
 | app/ui/ 全部模块无测试 | E1 | — | 需烟雾测试覆盖 |
-| print() 遗留未全部替换为 logging | E2 | 336 | 部分完成 |
 | 队列无大小上限 | E3 | 120 | 部分完成 |
-| cv2.imread() 中文路径扫描未完成 | T3 | 224 | 70% |
 | 渲染分辨率自适应未实现 | T4 | 60 | 未开始 |
 | 依赖版本未锁定 | T5 | 14 | 接受风险 |
 
@@ -520,24 +518,24 @@ flowchart TD
 
 ### 5.2 按模块划分
 
-| 模块 | 测试文件大小 | 覆盖水平 | 状态 |
-|------|:----------:|:--------:|:----:|
-| `app/core/protocol.py` | 11.7 KB | 高 | OK |
-| `app/core/brush.py` | 9.7 KB | 高 | OK |
-| `app/core/animation/` | 7.9 + 4.5 KB | 中 | OK |
-| `app/core/renderer.py` | 7.8 KB | 中 | OK |
-| `app/utils/storage.py` | 6.9 KB | 中 | OK |
-| `app/utils/config_loader.py` | 5.8 KB | 中 | OK |
-| `app/ai/agent.py` | 5.2 KB | 中 | OK |
-| `app/core/face_draw.py` | 5.0 KB | 中 | OK |
-| `app/core/templates.py` | 2.8 KB | 中 | OK |
-| `app/ai/generator.py` | — | **无** | 待补充 |
-| `app/ai/comfy_manager.py` | — | **无** | 待补充 |
-| `app/core/tracker.py` | — | **无** | 待补充 |
-| `app/core/tracker_stickers.py` | — | **无** | 待补充 |
-| `app/core/tracker_animation.py` | — | **无** | 待补充 |
-| `app/ui/*` | — | **无** | 待补充 |
-| `app/main.py` | — | **无** | 待补充 |
+| 模块 | 覆盖水平 | 状态 |
+|------|:--------:|:----:|
+| `app/core/protocol.py` | 高 | OK |
+| `app/core/brush.py` | 高 | OK |
+| `app/core/animation/` | 中 | OK |
+| `app/core/renderer.py` | 中 | OK |
+| `app/utils/storage.py` | 中 | OK |
+| `app/utils/config_loader.py` | 中 | OK |
+| `app/ai/agent.py` | 中 | OK |
+| `app/core/face_draw.py` | 中 | OK |
+| `app/core/templates.py` | 中 | OK |
+| `app/ai/generator.py` | 中 | OK |
+| `app/ai/comfy_manager.py` | 低 | OK |
+| `app/core/tracker.py` | 中 | OK |
+| `app/core/tracker_stickers.py` | 中 | OK |
+| `app/core/tracker_animation.py` | 中 | OK |
+| `app/main.py` | 中 | OK |
+| `app/ui/*` | **无** | 待补充 |
 
 ---
 
@@ -548,23 +546,24 @@ flowchart TD
 | 事项 | 状态 | 说明 |
 |------|:----:|------|
 | pre-commit hooks 部署 | ✅ | 语法检查 + pytest 自动运行 |
-| pytest 套件（278 用例） | ✅ | 12 文件，全部通过 |
-| 部分模块中高覆盖 | ✅ | protocol / brush / renderer / templates / storage / config_loader |
+| pytest 套件（401 用例） | ✅ | 17 文件，全部通过 |
+| 全部核心模块有测试覆盖 | ✅ | protocol / brush / renderer / templates / storage / config_loader / tracker / generator / comfy_manager |
 | 日志系统 | ✅ | `logging` 全模块 + ERROR 落盘 + 轮转 |
 | 线程 gating | ✅ | `GenerationState` 锁机制 |
 
-### 6.2 阶段二：覆盖补充（当前重点，计划 2 周）
+### 6.2 阶段二：覆盖补充（已完成）
 
-| 事项 | 优先级 | 方法 |
-|------|:------:|------|
-| 补充 `generator.py` 测试 | P0 | Mock ComfyUI HTTP 响应 |
-| 补充 `tracker.py` 测试 | P0 | 模拟队列输入/输出 |
-| 补充 `tracker_stickers.py` 测试 | P1 | 状态机测试 |
-| 补充 `tracker_animation.py` 测试 | P1 | 动画片段评估测试 |
-| 补充 `comfy_manager.py` 测试 | P2 | 子进程 mock |
-| 提升覆盖率至 80%+ | P0 | 整体评估 |
+| 事项 | 状态 | 说明 |
+|------|:----:|------|
+| 补充 `generator.py` 测试 | ✅ | Mock ComfyUI HTTP 响应 |
+| 补充 `tracker.py` 测试 | ✅ | 模拟队列输入/输出 |
+| 补充 `tracker_stickers.py` 测试 | ✅ | 状态机测试 |
+| 补充 `tracker_animation.py` 测试 | ✅ | 动画片段评估测试 |
+| 补充 `comfy_manager.py` 测试 | ✅ | 子进程 mock |
+| 补充 `main.py` 测试 | ✅ | 入口与队列初始化测试 |
+| 全量 401 用例通过 | ✅ | 17 个测试文件 |
 
-### 6.3 阶段三：运行时保障（计划 1 周）
+### 6.3 阶段三：运行时保障（当前重点，计划 1 周）
 
 | 事项 | 优先级 | 方法 |
 |------|:------:|------|
@@ -612,7 +611,7 @@ flowchart TD
 | pre-commit | MIT | Git hooks 管理 |
 | OpenCV | Apache 2.0 | 图像处理 |
 | MediaPipe | Apache 2.0 | 人脸检测 |
-| PyQt5 | GPL | UI 框架 |
+| PySide6 | LGPL | UI 框架 |
 | openai (Python SDK) | Apache 2.0 | DeepSeek API 调用 |
 
 ---

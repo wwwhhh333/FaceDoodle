@@ -4,7 +4,7 @@ import queue
 
 import pytest
 
-from app.core.animation import AnimationEngine, AnimationClip, Keyframe
+from app.core.animation import AnimationEngine, AnimationClip, Keyframe, TextureAnimator
 from app.core.protocol import Adjustment, StickerInstance
 from app.core.protocol import (
     AnimPlay, AnimPause, AnimStop, AnimSetClip,
@@ -28,6 +28,7 @@ class _TestAnimationProcessor(AnimationProcessor):
         self._pending_export = None
         self._pending_texture_gen = None
         self._texture_gen_running = False
+        self.texture_animator = TextureAnimator()
         self.cached_face_data = None
 
 

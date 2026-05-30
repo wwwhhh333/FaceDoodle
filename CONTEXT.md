@@ -23,26 +23,10 @@
 独立进程，仅负责摄像头/视频帧采集。与 Consumer 进程通过 `frame_queue` 通信。
 
 ### ConsumerProcessor
-中央编排器，12 步帧循环的主控。通过 Mixin 组合获得 StickerManager 和 AnimationProcessor 的能力。
+中央编排器，14 步帧循环的主控。通过 Mixin 组合获得 StickerManager 和 AnimationProcessor 的能力。
 
 ### StickerManager
 Mixin，封装 StickerInstance 的增删改查和模板/分组加载。
 
 ### AnimationProcessor
 Mixin，封装关键帧动画播放、导出和 AI 纹理动画生成。
-
-## Web 架构迁移（2026-05-21 决议）
-
-### 迁移目标
-将 FaceDoodle 从 PySide6 桌面应用改造为 Web 应用（浏览器客户端 + 本地 Python 后端）。
-
-### 已确定的架构决策
-
-| 决策点 | 选择 | 理由 |
-|-------|------|------|
-| 部署方式 | 本地运行 | 保留外部编辑器、本地文件系统、ComfyUI 直连 |
-| 面部检测 | MediaPipe JS（浏览器端） | 零延迟、帧不上传、服务器不负担检测 |
-| 通信协议 | WebSocket（主通道）+ HTTP（文件上传） | 双向实时 + 大文件专用 |
-| 前端框架 | Vue 3 + Canvas | 组件化 UI（设置面板、画廊、时间轴）+ Canvas 视频渲染 |
-| 摄像头帧传输 | 640×480 WebP 压缩 | MediaPipe 精度够，带宽 ~5-8MB/s |
-| 贴纸渲染 | 浏览器端 Canvas 2D API | 零帧延迟、服务器不碰渲染 |

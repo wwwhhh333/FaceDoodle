@@ -6,7 +6,7 @@
 
 ### AI 贴纸生成（聊天式交互）
 - 底部聊天面板，自然语言描述需求（例如"海盗风格，给我眼罩和帽子"）
-- DeepSeek 多轮对话解析意图，支持三种操作：
+- DeepSeek 多轮对话解析意图，支持两种操作：
   - **生成** — 单/多贴纸生成，自动选面部区域和缩放
   - **反问** — 需求不明确时主动澄清
 - ComfyUI SDXL + Layer Diffusion 生成透明背景贴纸
@@ -20,7 +20,7 @@
 ### 贴纸动画
 - 关键帧动画系统：每张贴纸可绑定动画片段
 - 支持的属性：offset_x、offset_y、rotation、scale_mult
-- 5 种缓动函数：linear、ease-in、ease-out、ease-in-out
+- 4 种缓动函数：linear、ease-in、ease-out、ease-in-out
 - 支持循环播放、Seek、导出 GIF/MP4
 - 纹理动画：AI 驱动生成动态贴纸（motion prompt → ComfyUI 精灵表）
 - 动画时间轴面板可视化编辑
@@ -203,15 +203,18 @@ FaceDoodle/
 ├── app/
 │   ├── main.py                  # 入口，进程与队列初始化
 │   ├── ai/
-│   │   ├── agent.py             # DeepSeek 多轮对话解析（generate/adjust/ask）
-│   │   └── generator.py         # ComfyUI API 客户端
+│   │   ├── agent.py             # DeepSeek 多轮对话解析（generate/ask）
+│   │   ├── generator.py         # ComfyUI API 客户端
+│   │   ├── comfy_manager.py     # ComfyUI 子进程生命周期管理
+│   │   └── workflows/           # ComfyUI 工作流 JSON（×3）
 │   ├── core/
 │   │   ├── animation/           # 动画系统（clip/engine/texture/gen/export）
 │   │   ├── brush.py             # 笔刷引擎
 │   │   ├── face_mesh.py         # MediaPipe 468 点检测
 │   │   ├── face_draw.py         # 面部绘制画布 + 坐标映射
 │   │   ├── protocol.py          # 所有队列消息的 typed dataclass 定义
-│   │   ├── renderer.py          # 贴纸透视贴合 + 加载动画 + 面部网格
+│   │   ├── renderer.py          # 贴纸透视贴合 + 面部网格
+│   │   ├── sticker_registry.py  # StickerRegistry 域模型（活跃贴纸中央仓库）
 │   │   ├── templates.py         # 系统模板贴纸生成
 │   │   ├── tracker.py           # Consumer 主循环，AI 调度与渲染编排
 │   │   ├── tracker_stickers.py  # StickerManager mixin（贴纸增删改查）
@@ -224,12 +227,13 @@ FaceDoodle/
 │   │   ├── drawing_widgets.py   # 绘制相关组件
 │   │   ├── animation_timeline.py # 动画时间轴面板
 │   │   ├── animation_gen_dialog.py # 动画生成对话框
+│   │   ├── style_preset_manager_dialog.py # 风格预设管理对话框
 │   │   └── theme.py             # 主题色板与字体
-│   ├── utils/
-│   │   ├── config_loader.py     # 配置文件加载
-│   │   ├── image_proc.py        # 图像加载与预处理
-│   │   └── storage.py           # 贴纸持久化存储
-│   └── workflows/               # ComfyUI 工作流 JSON
+│   └── utils/
+│       ├── config_loader.py     # 配置文件加载 + 风格预设
+│       ├── image_proc.py        # 图像加载与预处理
+│       ├── storage.py           # 贴纸持久化存储
+│       └── logging_config.py    # 集中式多进程日志配置
 ├── assets/
 │   ├── brushes/                 # 笔刷蒙版 PNG + 配置
 │   ├── templates/               # 系统模板（自动生成）

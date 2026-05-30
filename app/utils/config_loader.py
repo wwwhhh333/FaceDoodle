@@ -89,6 +89,8 @@ DEFAULT_CONFIG = {
 }
 
 _config = None
+_config_mtime = 0                  # mtime of config.json at last load (0 = unloaded)
+_AUTO_RELOAD_ENABLED = True        # set False during tests to avoid I/O dependencies
 
 
 def is_first_run(config_path="config.json"):
@@ -113,6 +115,11 @@ def load_config(config_path="config.json"):
         "COMFYUI_SERVER", config["comfyui"]["server_address"]
     )
 
+    global _config_mtime
+    try:
+        _config_mtime = os.path.getmtime(config_path)
+    except OSError:
+        _config_mtime = 0
     _config = config
     return config
 
@@ -129,10 +136,26 @@ def _seed_from_example(config_path):
         log.warning("无法从 example 创建配置: %s", e)
 
 
-def get_config():
-    global _config
+def get_config(config_path="config.json"):
+    """Return the cached config, auto-reloading from disk when another process
+    has written a newer version (handles cross-process LoRA / style changes)."""
+    global _config, _config_mtime
     if _config is None:
-        _config = load_config()
+        return load_config(config_path)
+    if not _AUTO_RELOAD_ENABLED:
+        return _config
+    try:
+        disk_mtime = os.path.getmtime(config_path)
+    except OSError:
+        return _config
+    if disk_mtime > _config_mtime:
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                disk_cfg = json.load(f)
+            _deep_merge(_config, disk_cfg)
+            _config_mtime = disk_mtime
+        except (OSError, json.JSONDecodeError):
+            pass
     return _config
 
 

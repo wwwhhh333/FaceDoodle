@@ -39,6 +39,7 @@ class AnimationProcessor:
                     self._adj_is_delta.discard(msg.instance_id)
             elif isinstance(msg, AnimStop):
                 self.anim_engine.stop(msg.instance_id)
+                self.texture_animator.reset(msg.instance_id)
                 if msg.instance_id in self._adj_is_delta:
                     self._adj_to_absolute(msg.instance_id)
                     self._adj_is_delta.discard(msg.instance_id)
@@ -54,6 +55,7 @@ class AnimationProcessor:
                 self.anim_engine.set_loop(msg.instance_id, msg.loop)
             elif isinstance(msg, AnimSeek):
                 self.anim_engine.seek(msg.instance_id, msg.time)
+                self.texture_animator.seek(msg.instance_id, msg.time)
             elif isinstance(msg, AnimExport):
                 self._pending_export = (msg.instance_id, msg.format, msg.fps, msg.output_path)
             elif isinstance(msg, AnimGenTexture):
@@ -139,7 +141,7 @@ class AnimationProcessor:
         kf.easing = msg.easing
         if time_changed:
             clip.keyframes.sort(key=lambda k: k.time)
-            clip._recalc_duration()
+            clip._recalc_duration()  # recalc on reorder (may shrink)
         self.display_queue.put(AnimClipUpdated(clip_data=clip.to_dict()))
 
     def _evaluate_animations(self):
@@ -147,6 +149,8 @@ class AnimationProcessor:
             iid = instance.instance_id
             clip = self.anim_engine.get_bound_clip(iid)
             if clip is None:
+                self._anim_evaluations.pop(iid, None)
+                self._adj_is_delta.discard(iid)
                 continue
             self.anim_engine.tick(iid)
             anim_adj = self.anim_engine.evaluate(iid)
@@ -170,6 +174,8 @@ class AnimationProcessor:
         face_data = self.cached_face_data
         if face_data is None:
             return
+        # Shallow-copy to insulate the export thread from main-loop mutations
+        face_snapshot = {k: v for k, v in face_data.items()}
 
         # Snapshot absolute adjustments before spawning thread.
         iid = instance.instance_id
@@ -185,7 +191,7 @@ class AnimationProcessor:
 
         threading.Thread(
             target=self._run_export,
-            args=(clip, instance, face_data, fmt, fps, output_path, manual_adj),
+            args=(clip, instance, face_snapshot, fmt, fps, output_path, manual_adj),
             daemon=True,
         ).start()
 

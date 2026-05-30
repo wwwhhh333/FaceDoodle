@@ -115,3 +115,19 @@ class TextureAnimator:
         entry = self._entries.get(instance_id)
         if entry:
             entry["start"] = time.perf_counter()
+
+    def seek(self, instance_id, t):
+        """Move the texture animation playhead to time *t* (seconds).
+
+        Adjusts the internal start timestamp so that ``get_frame_index()``
+        returns the frame at *t* on the next call.
+        """
+        entry = self._entries.get(instance_id)
+        if entry is None:
+            return
+        frame = int(t * entry["fps"])
+        if not entry["loop"]:
+            frame = min(frame, entry["frame_count"] - 1)
+        else:
+            frame = frame % entry["frame_count"]
+        entry["start"] = time.perf_counter() - (frame / entry["fps"])

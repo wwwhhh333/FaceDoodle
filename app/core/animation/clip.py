@@ -89,18 +89,22 @@ class AnimationClip:
     def add_keyframe(self, kf):
         i = bisect_right([k.time for k in self.keyframes], kf.time)
         self.keyframes.insert(i, kf)
-        self._recalc_duration()
+        self._extend_duration()
 
     def remove_keyframe(self, index):
         if 0 <= index < len(self.keyframes):
             del self.keyframes[index]
             self._recalc_duration()
 
-    def _recalc_duration(self):
+    def _extend_duration(self):
         if self.keyframes:
             last = self.keyframes[-1].time
             if last > self.duration:
                 self.duration = last + 0.5
+
+    def _recalc_duration(self):
+        if self.keyframes:
+            self.duration = max(k.time for k in self.keyframes) + 0.5
 
     def to_dict(self):
         return {
