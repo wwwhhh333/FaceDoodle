@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import time
 import cv2
 import numpy as np
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -33,7 +34,7 @@ from app.core.protocol import (
     GalLoadTemplate, GalLoadSticker, GalMergeGroup,
     DrawToggleDrawMode, DrawSetRegion, DrawSetBrush, DrawToggleEraser,
     DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
-    DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
+    DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave, DrawText,
     DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
     DispGenProgress, DispAgentMessage, DispAgentQuestion,
     AnimExportProgress, AnimClipUpdated, AnimPlaybackState,
@@ -299,13 +300,18 @@ class FaceDoodleWindow(QMainWindow):
         self.add_to_face_btn.setEnabled(False)
         rp_layout.addWidget(self.add_to_face_btn)
 
-        self.ai_anim_btn = StyledButton("AI 动画", "primary")
+        self.ai_anim_btn = StyledButton("AI 动画 (开发中)", "primary")
         self.ai_anim_btn.clicked.connect(self._on_ai_animate)
         self.ai_anim_btn.setEnabled(False)
+        self.ai_anim_btn.setToolTip("AI 纹理动画功能正在开发中，暂不可用")
         rp_layout.addWidget(self.ai_anim_btn)
 
-        self.export_emoji_btn = StyledButton("导出表情", "ghost")
-        self.export_emoji_btn.clicked.connect(self._on_export_emoji)
+        self.text_btn = StyledButton("添加文字", "ghost")
+        self.text_btn.clicked.connect(self._on_add_text)
+        rp_layout.addWidget(self.text_btn)
+
+        self.export_emoji_btn = StyledButton("导出GIF", "ghost")
+        self.export_emoji_btn.clicked.connect(self._on_export_gif)
         self.export_emoji_btn.setEnabled(False)
         rp_layout.addWidget(self.export_emoji_btn)
 
@@ -779,14 +785,15 @@ class FaceDoodleWindow(QMainWindow):
             card.set_active(False)
         self.add_to_face_btn.setEnabled(len(self._gallery_selected_ids) > 0)
 
-        # Enable AI Animation only when a single non-animated sticker is selected
-        can_animate = False
-        if len(self._gallery_selected_ids) == 1:
-            sid = next(iter(self._gallery_selected_ids))
-            card = self._gallery_items.get(sid) or self._template_cards.get(sid)
-            if card and not card._animated:
-                can_animate = True
-        self.ai_anim_btn.setEnabled(can_animate)
+        # AI Animation button: feature under development, always disabled
+        # TODO: re-enable when AnimateDiff workflow is stable
+        # can_animate = False
+        # if len(self._gallery_selected_ids) == 1:
+        #     sid = next(iter(self._gallery_selected_ids))
+        #     card = self._gallery_items.get(sid) or self._template_cards.get(sid)
+        #     if card and not card._animated:
+        #         can_animate = True
+        # self.ai_anim_btn.setEnabled(can_animate)
 
         # Enable export emoji when there are active stickers or face drawing content
         self._update_export_btn()
@@ -821,8 +828,9 @@ class FaceDoodleWindow(QMainWindow):
 
     def _on_sticker_saved(self, sticker_id):
         self._current_sticker_id = sticker_id
+        self._gallery_selected_ids = {sticker_id}  # auto-select for AI animation
         self._load_gallery()
-        # Don't re-enable here — DispGenProgress(done=True) handles it
+        self._update_gallery_selection_visuals()
 
     def _on_generation_failed(self, error_msg):
         self.chat_panel.add_agent_message(f"生成失败: {error_msg}", "failed")
@@ -836,6 +844,7 @@ class FaceDoodleWindow(QMainWindow):
             self.chat_panel.add_agent_message(msg.message, "done")
             self._load_gallery()
             self._reenable_input()
+            self._update_gallery_selection_visuals()  # refresh button states
         else:
             self.status_label.setText(msg.message)
             if msg.total > 0 and msg.total_steps > 0:
@@ -1333,30 +1342,25 @@ class FaceDoodleWindow(QMainWindow):
         if len(self._gallery_selected_ids) != 1:
             return
         sid = next(iter(self._gallery_selected_ids))
-        dlg = AnimationGenDialog(sid, self)
+        dlg = AnimationGenDialog(sid, self.animation_queue, self)
         self._ai_anim_dlg = dlg
-        if dlg.exec() == QDialog.Accepted:
-            params = dlg.result()
-            self.animation_queue.put(AnimGenTexture(
-                sticker_id=params["sticker_id"],
-                motion_prompt=params["motion_prompt"],
-                frame_count=params["frame_count"],
-                fps=params["fps"],
-            ))
-            self._gallery_selected_ids.clear()
-            self._update_gallery_selection_visuals()
+        self._gallery_selected_ids.clear()
+        self._update_gallery_selection_visuals()
+        dlg.exec()
 
     def _on_anim_gen_progress(self, msg):
         dlg = getattr(self, '_ai_anim_dlg', None)
-        if dlg and (not msg.done):
+        if dlg is None:
+            return
+        if not msg.done:
             dlg.set_progress(msg.progress)
-        elif dlg and msg.done:
-            dlg.set_progress(1.0)
+        else:
             if msg.error:
-                dlg.set_error(msg.error)
+                dlg.on_done(error=msg.error)
             else:
-                # Refresh gallery to show new animated sticker
-                self._load_gallery()
+                dlg.on_done()
+                if msg.result_sticker_id:
+                    self._load_gallery()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1661,25 +1665,157 @@ class FaceDoodleWindow(QMainWindow):
         self._current_frame = cv_img.copy()  # keep a snapshot for export
         self._update_export_btn()
 
-    def _on_export_emoji(self):
+    def _on_add_text(self):
+        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
+                                        QComboBox, QSpinBox, QPushButton, QLabel,
+                                        QColorDialog)
+        from app.utils.image_proc import render_text_sticker, list_system_fonts
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("添加文字贴纸")
+        dlg.setMinimumWidth(420)
+        layout = QVBoxLayout(dlg)
+
+        # Text input
+        layout.addWidget(QLabel("文字内容："))
+        text_input = QLineEdit()
+        text_input.setPlaceholderText("输入要显示的文字...")
+        layout.addWidget(text_input)
+
+        # Font selection
+        font_row = QHBoxLayout()
+        font_row.addWidget(QLabel("字体："))
+        font_combo = QComboBox()
+        fonts = list_system_fonts()
+        for name, path in fonts:
+            font_combo.addItem(name, path)
+        font_row.addWidget(font_combo, stretch=1)
+        layout.addLayout(font_row)
+
+        # Font size
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("字号："))
+        size_spin = QSpinBox()
+        size_spin.setRange(12, 300)
+        size_spin.setValue(64)
+        size_row.addWidget(size_spin)
+        size_row.addStretch()
+        layout.addLayout(size_row)
+
+        # Color
+        color_row = QHBoxLayout()
+        color_row.addWidget(QLabel("颜色："))
+        self._text_color = (255, 255, 255)  # BGR white
+        color_btn = QPushButton("选择颜色")
+        color_btn.setStyleSheet("background: white;")
+        def pick_color():
+            c = QColorDialog.getColor()
+            if c.isValid():
+                self._text_color = (c.blue(), c.green(), c.red())
+                color_btn.setStyleSheet(f"background: {c.name()};")
+        color_btn.clicked.connect(pick_color)
+        color_row.addWidget(color_btn)
+        color_row.addStretch()
+        layout.addLayout(color_row)
+
+        # Stroke
+        stroke_row = QHBoxLayout()
+        stroke_row.addWidget(QLabel("描边宽度："))
+        stroke_spin = QSpinBox()
+        stroke_spin.setRange(0, 20)
+        stroke_spin.setValue(2)
+        stroke_row.addWidget(stroke_spin)
+        stroke_row.addWidget(QLabel("描边颜色："))
+        self._stroke_color = (0, 0, 0)  # BGR black
+        stroke_btn = QPushButton("黑")
+        stroke_btn.setStyleSheet("background: black; color: white;")
+        def pick_stroke():
+            c = QColorDialog.getColor()
+            if c.isValid():
+                self._stroke_color = (c.blue(), c.green(), c.red())
+                stroke_btn.setStyleSheet(f"background: {c.name()};")
+                stroke_btn.setText("✓")
+        stroke_btn.clicked.connect(pick_stroke)
+        stroke_row.addWidget(stroke_btn)
+        stroke_row.addStretch()
+        layout.addLayout(stroke_row)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("添加到面部")
+        cancel_btn = QPushButton("取消")
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        def do_ok():
+            text = text_input.text().strip()
+            if not text:
+                return
+            font_path = font_combo.currentData()
+            font_size = size_spin.value()
+            stroke_w = stroke_spin.value()
+            sticker = render_text_sticker(
+                text, font_path, font_size,
+                self._text_color,
+                stroke_width=stroke_w,
+                stroke_color_bgr=self._stroke_color if stroke_w > 0 else None,
+            )
+            if sticker is None:
+                return
+            from app.utils import storage
+            sid = storage.save_sticker(sticker, {
+                "prompt": f"文字: {text}",
+                "location": "forehead_full",
+                "scale": 1.0,
+            })
+            self.gallery_queue.put(GalAddSticker(sticker_id=sid))
+            self._load_gallery()
+            dlg.accept()
+
+        ok_btn.clicked.connect(do_ok)
+        cancel_btn.clicked.connect(dlg.reject)
+        text_input.returnPressed.connect(do_ok)
+        dlg.exec()
+
+    def _on_export_gif(self):
         if self._current_frame is None:
             return
-        from PySide6.QtWidgets import QFileDialog
+        from PySide6.QtWidgets import QFileDialog, QApplication
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出表情包", "emoji.png",
-            "PNG 图片 (*.png);;JPEG 图片 (*.jpg)"
+            self, "导出GIF", "emoji.gif",
+            "GIF 动画 (*.gif)"
         )
         if not path:
             return
+        self.status_label.setText("正在录制 GIF (2秒)...")
+        QApplication.processEvents()
+
+        frames = []
+        start = time.time()
+        while time.time() - start < 2.0:
+            if self._current_frame is not None:
+                rgb = cv2.cvtColor(self._current_frame, cv2.COLOR_BGR2RGB)
+                frames.append(rgb)
+            QApplication.processEvents()
+            time.sleep(0.05)
+
+        if not frames:
+            self.status_label.setText("录制失败: 无帧")
+            return
+
         try:
-            if path.lower().endswith(('.jpg', '.jpeg')):
-                cv2.imwrite(path, self._current_frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            else:
-                cv2.imwrite(path, self._current_frame)
-            h, w = self._current_frame.shape[:2]
-            self.status_label.setText(f"已导出 {w}×{h} → {os.path.basename(path)}")
+            import imageio
+            imageio.mimsave(path, frames, fps=len(frames) // 2, loop=0)
+            self.status_label.setText(f"已导出 {len(frames)} 帧 → {os.path.basename(path)}")
+        except ImportError:
+            # fallback: save first frame as static GIF
+            import imageio
+            imageio.mimsave(path, [frames[0]], fps=1, loop=0)
+            self.status_label.setText(f"imageio 不可用，已导出单帧 → {os.path.basename(path)}")
         except Exception:
-            log.exception("导出表情包失败")
+            log.exception("导出GIF失败")
 
     def closeEvent(self, event):
         from app.utils.storage import save_preferences

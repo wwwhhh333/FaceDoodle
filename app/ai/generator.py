@@ -273,7 +273,11 @@ class ComfyClient:
         Modifies *workflow* in place.  Returns the workflow for chaining.
         """
         prompt_found = False
-        need_image = input_image_path and os.path.exists(input_image_path)
+        has_load_image = any(
+            node.get("class_type") == "LoadImage" for node in workflow.values()
+        )
+        need_image = (input_image_path and os.path.exists(input_image_path)
+                      and has_load_image)
         slug = self._make_slug(filename_prefix or prompt_text)
         lora_cfg = self._cfg.get("model", {}).get("lora", {})
         have_lora_node = False

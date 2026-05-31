@@ -12,7 +12,7 @@ from app.ai.agent import FaceDoodleAgent
 from app.ai.generator import ComfyClient
 from app.core.face_mesh import FaceDetector
 from app.core.renderer import (render_scene, render_loading_progress, render_face_mesh,
-                                apply_head_pose_skew, _build_location_quad)
+                                apply_head_pose_skew, _build_location_quad, render_text_overlay)
 from app.core.face_draw import FaceDrawCanvas
 from app.core.animation import AnimationEngine
 from app.core.animation import TextureAnimator, extract_sprite_frame
@@ -23,7 +23,7 @@ from app.core.protocol import (
     GalLoadTemplate, GalLoadSticker, GalMergeGroup,
     DrawToggleDrawMode, DrawSetRegion, DrawSetBrush, DrawToggleEraser,
     DrawSetBrushType, DrawSetPressureMode, DrawSetSpacing, DrawSetScatter,
-    DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave,
+    DrawUndo, DrawClear, DrawStrokeBegin, DrawStrokePoint, DrawStrokeEnd, DrawSave, DrawText,
     DispStickerSaved, DispGenerationFailed, DispActiveStickersChanged,
     DispGenProgress, DispAgentMessage, DispAgentQuestion,
     AnimPlaybackState,
@@ -365,6 +365,7 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
         self.texture_animator = TextureAnimator()
         self._pending_texture_gen = None   # AnimGenTexture message
         self._texture_gen_running = False
+        self._text_state = None            # dict for text overlay
 
         # Register cross-domain cleanup: when a sticker is removed, animation
         # processor must also clean up its state.  This replaces the old pattern
@@ -761,6 +762,19 @@ class ConsumerProcessor(StickerManager, AnimationProcessor):
                         "scale": 1.0,
                     })
                     self.display_queue.put(DispStickerSaved(sticker_id=sid))
+
+            elif isinstance(msg, DrawText):
+                if msg.clear:
+                    self._text_state = None
+                elif msg.text:
+                    self._text_state = {
+                        "text": msg.text,
+                        "pos_x": msg.pos_x,
+                        "pos_y": msg.pos_y,
+                        "font_scale": msg.font_scale,
+                        "color_bgr": msg.color_bgr,
+                        "thickness": msg.thickness,
+                    }
 
     # ── rendering ──
 

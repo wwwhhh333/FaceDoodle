@@ -1,4 +1,7 @@
-"""Dialog for submitting an AI texture animation generation request."""
+"""Dialog for submitting an AI texture animation generation request.
+
+Stays open during generation to show progress and result.
+"""
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                               QPushButton, QLineEdit, QSpinBox, QLabel,
@@ -14,9 +17,11 @@ _ERROR_STYLESHEET = label_css('caption', ERROR)
 
 
 class AnimationGenDialog(QDialog):
-    def __init__(self, sticker_id, parent=None):
+    def __init__(self, sticker_id, animation_queue, parent=None):
         super().__init__(parent)
         self._sticker_id = sticker_id
+        self._animation_queue = animation_queue
+        self._running = False
         self.setWindowTitle("AI 纹理动画")
         self.setMinimumWidth(380)
 
@@ -83,7 +88,7 @@ class AnimationGenDialog(QDialog):
         btn_layout.addStretch()
 
         self._cancel_btn = StyledButton("取消", "utility")
-        self._cancel_btn.clicked.connect(self.reject)
+        self._cancel_btn.clicked.connect(self._on_close)
         btn_layout.addWidget(self._cancel_btn)
 
         self._gen_btn = StyledButton("生成动画", "primary")
@@ -97,28 +102,54 @@ class AnimationGenDialog(QDialog):
         self._frame_label.setText(f"{total} 帧")
 
     def _on_generate(self):
-        if not self._prompt_edit.text().strip():
-            self._status_label.setText("请输入运动描述")
+        if self._running:
             return
-        self.accept()
+        text = self._prompt_edit.text().strip()
+        if not text:
+            self._status_label.setText("请输入运动描述")
+            self._status_label.setStyleSheet(_ERROR_STYLESHEET)
+            return
+
+        self._running = True
+        self._gen_btn.setEnabled(False)
+        self._progress.setVisible(True)
+        self._progress.setValue(0)
+        self._status_label.setText("正在生成...")
+        self._status_label.setStyleSheet(f"color: {INK_MUTED_80}; {font_css('caption')}")
+
+        from app.core.protocol import AnimGenTexture
+        self._animation_queue.put(AnimGenTexture(
+            sticker_id=self._sticker_id,
+            motion_prompt=text,
+            frame_count=self._duration_spin.value() * self._fps_spin.value(),
+            fps=self._fps_spin.value(),
+        ))
+
+    def _on_close(self):
+        if self._running:
+            # Don't close during generation — let cancel act as future cancel
+            return
+        self.reject()
 
     def set_progress(self, value):
         self._progress.setVisible(True)
         self._progress.setValue(int(value * 100))
-        if value >= 1.0:
-            self._status_label.setText("生成完成！")
-            self._gen_btn.setEnabled(False)
+
+    def on_done(self, error=None):
+        self._running = False
+        self._gen_btn.setEnabled(False)
+        self._cancel_btn.setText("关闭")
+        if error:
+            self._status_label.setText(f"失败: {error}")
+            self._status_label.setStyleSheet(_ERROR_STYLESHEET)
+            self._gen_btn.setEnabled(True)
+            self._gen_btn.setText("重试")
+            self._running = False
             self._cancel_btn.setText("关闭")
-
-    def set_error(self, error_text):
-        self._status_label.setText(f"错误: {error_text}")
-        self._status_label.setStyleSheet(_ERROR_STYLESHEET)
-        self._gen_btn.setEnabled(True)
-
-    def result(self):
-        return {
-            "sticker_id": self._sticker_id,
-            "motion_prompt": self._prompt_edit.text().strip(),
-            "frame_count": self._duration_spin.value() * self._fps_spin.value(),
-            "fps": self._fps_spin.value(),
-        }
+        else:
+            self._status_label.setText("生成完成！")
+            self._status_label.setStyleSheet(f"color: {PRIMARY}; {font_css('caption')}")
+            self._progress.setValue(100)
+            self._cancel_btn.setText("关闭")
+            self._cancel_btn.clicked.disconnect()
+            self._cancel_btn.clicked.connect(self.accept)

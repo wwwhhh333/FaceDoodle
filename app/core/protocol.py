@@ -43,6 +43,7 @@ class Draw:
     STROKE_POINT       = "stroke_point"
     STROKE_END        = "stroke_end"
     SAVE              = "save"
+    SET_TEXT          = "set_text"
 
 
 class Result:
@@ -240,10 +241,22 @@ class DrawSave:
     action: str = Draw.SAVE
 
 
+@dataclass
+class DrawText:
+    action: str = Draw.SET_TEXT
+    text: str = ""
+    pos_x: float = 0.5       # 0–1 相对于脸宽的位置 (以鼻尖为原点)
+    pos_y: float = -0.3      # 正=下，负=上
+    font_scale: float = 1.0
+    color_bgr: tuple = (255, 255, 255)  # BGR
+    thickness: int = 2
+    clear: bool = False      # True 时清除文字
+
+
 DrawMsg = (DrawToggleDrawMode | DrawSetRegion | DrawSetBrush | DrawToggleEraser
            | DrawSetBrushType | DrawSetPressureMode | DrawSetSpacing
            | DrawSetScatter | DrawUndo | DrawClear | DrawStrokeBegin
-           | DrawStrokePoint | DrawStrokeEnd | DrawSave)
+           | DrawStrokePoint | DrawStrokeEnd | DrawSave | DrawText)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -28,7 +28,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_agent.py -v   # single file
 ```
 
-17 test files under `tests/` (401 test cases), pytest with fixtures in `conftest.py`. Tests cover agent, brush, config, templates, renderer, face_draw, storage, animation, protocol, and texture_anim. `test_agent.py` tests the keyword-fallback path (no API key needed).
+18 test files under `tests/` (401 test cases), pytest with fixtures in `conftest.py`. Tests cover agent, brush, config, templates, renderer, face_draw, storage, animation, protocol, and texture_anim. `test_agent.py` tests the keyword-fallback path (no API key needed).
 
 **After any code change**, run the full test suite. If the modified code has no test coverage, add tests before declaring the task complete. Passing unit tests do not guarantee correctness — runtime issues (Chinese path encoding, silent error drops, queue message handling) only surface when the app actually runs.
 
@@ -226,7 +226,7 @@ FaceDoodle/
 │   ├── brushes/                     # Brush tip PNGs + brushes.json config
 │   ├── templates/                   # Built-in templates (auto-generated)
 │   └── gallery/                     # User stickers (PNG + index.json)
-├── tests/                           # pytest suite (401 tests across 17 files)
+├── tests/                           # pytest suite (401 tests across 18 files)
 ├── scripts/
 │   └── check_syntax.py              # Pre-commit syntax check script
 ├── config.json                      # Application configuration

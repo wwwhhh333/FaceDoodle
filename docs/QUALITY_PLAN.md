@@ -59,7 +59,7 @@ Consumer 单帧循环 12 步流水线。7 个多进程队列 + 1 个内部线程
 | 人脸检测 | MediaPipe 468 关键点模型 |
 | 图像处理 | OpenCV、NumPy |
 | 进程通信 | Python multiprocessing.Queue |
-| 测试 | pytest（17 文件，401 用例） |
+| 测试 | pytest（18 文件，401 用例） |
 | 质量关卡 | pre-commit hooks（语法检查 + 测试套件） |
 
 ### 1.4 质量范围
@@ -562,7 +562,7 @@ flowchart TD
 | 补充 `tracker_animation.py` 测试 | ✅ | 动画片段评估测试 |
 | 补充 `comfy_manager.py` 测试 | ✅ | 子进程 mock |
 | 补充 `main.py` 测试 | ✅ | 入口与队列初始化测试 |
-| 全量 401 用例通过 | ✅ | 17 个测试文件 |
+| 全量 401 用例通过 | ✅ | 18 个测试文件 |
 
 ### 6.3 阶段三：运行时保障（当前重点，计划 1 周）
 

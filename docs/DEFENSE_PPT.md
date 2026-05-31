@@ -41,7 +41,7 @@
 
 **内容**:
 - 一句话定义：摄像头实时 AR 贴纸，自然语言驱动 AI 生成
-- 六大功能模块：AI 贴纸生成 · 贴纸编辑 · 关键帧动画 · AI 纹理动画 · 面部绘制 · 简笔画精炼
+- 六大功能模块：AI 贴纸生成 · 贴纸编辑 · 关键帧动画 · 面部绘制 · 简笔画精炼 · 文字贴纸 · 导出GIF（注：AI 纹理动画模块因 ComfyUI AnimateDiff 环境兼容性问题标记为开发中）
 - 技术栈：Python · PySide6 · MediaPipe · DeepSeek · ComfyUI (SDXL + Layer Diffusion + ControlNet + AnimateDiff)
 - 团队：3 人，16 周，720 人时
 

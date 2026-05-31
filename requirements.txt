@@ -11,5 +11,6 @@ torchvision
 websockets
 aiohttp
 PySide6
+imageio
 python-multipart
 rembg

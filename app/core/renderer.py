@@ -609,3 +609,37 @@ def composite_stickers_to_merged(active_stickers, adjustments, face_data):
               composited_count, final_canvas_w, final_canvas_h,
               placement_scale, offset_x, offset_y)
     return merged, "full_face", placement_scale, offset_x, offset_y
+
+
+def render_text_overlay(frame, face_landmarks, text_state):
+    """Render text overlay on frame, positioned relative to face landmarks.
+
+    *text_state* is a dict with keys: text, pos_x, pos_y, font_scale, color_bgr, thickness.
+    pos_x/pos_y are in face_width units relative to nose_tip.
+    """
+    if not text_state or not text_state.get("text"):
+        return frame
+    if "nose_tip" not in face_landmarks:
+        return frame
+
+    nose = face_landmarks["nose_tip"]
+    face_w = max(float(face_landmarks.get("face_width", 1.0)), 1.0)
+
+    tx = int(nose[0] + text_state.get("pos_x", 0.0) * face_w)
+    ty = int(nose[1] + text_state.get("pos_y", 0.0) * face_w)
+    scale = text_state.get("font_scale", 1.0) * face_w / 280.0
+    color = text_state.get("color_bgr", (255, 255, 255))
+    thickness = max(1, int(text_state.get("thickness", 2) * face_w / 280.0))
+    text = text_state["text"]
+
+    h, w = frame.shape[:2]
+    tx = max(0, min(tx, w - 1))
+    ty = max(0, min(ty, h - 1))
+
+    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, scale, thickness)
+    # Draw background shadow for legibility
+    cv2.putText(frame, text, (tx - tw // 2 + 1, ty + th // 2 + 1),
+                cv2.FONT_HERSHEY_DUPLEX, scale, (0, 0, 0), thickness + 1, cv2.LINE_AA)
+    cv2.putText(frame, text, (tx - tw // 2, ty + th // 2),
+                cv2.FONT_HERSHEY_DUPLEX, scale, color, thickness, cv2.LINE_AA)
+    return frame

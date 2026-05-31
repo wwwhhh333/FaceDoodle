@@ -80,7 +80,7 @@ class TimeAxisTrack(QWidget):
         # Time ruler ticks
         pen = QPen(QColor(100, 100, 100))
         p.setPen(pen)
-        p.setFont(QFont("Segoe UI Variable", 9))
+        p.setFont(QFont("Segoe UI", 9))
         y_base = TRACK_HEIGHT
         for i in range(int(self._duration) + 1):
             x = self._time_to_x(float(i))

@@ -48,7 +48,7 @@ def _remove_background(frame_bgr):
             rgba = np.concatenate([rgba, alpha], axis=2)
         return rgba
     except ImportError:
-        log.warning("rembg 未安装，动画帧将没有透明背景")
+        log.info("rembg 未安装，动画帧将使用白色背景（不影响功能）")
         h, w = frame_bgr.shape[:2]
         alpha = np.ones((h, w, 1), dtype=np.uint8) * 255
         if frame_bgr.shape[2] == 4:
