@@ -3,7 +3,7 @@ import numpy as np
 
 from app.core.brush import BrushStateMixin, stamp_brush, stamp_line
 
-CANVAS_SIZE = 512
+CANVAS_SIZE = 1024
 MAX_UNDO = 20
 
 

@@ -55,14 +55,45 @@ def _deform_quad_by_pose(quad, face_landmarks):
     if np.linalg.norm(deformed_center - orig_center) > face_w * 1.5:
         return quad
 
+    # 逐角距离约束：solvePnP 提供变形方向（旋转/偏斜），
+    # 但 2D 地标距离是缩放真值（已含正确的相机透视）。
+    # 以鼻尖为稳定参考点，限制 solvePnP 的幅度，保留其方向。
+    # 灵感来自 ar-facedoodle：每个贴纸跟随其局部的 3D 三角面片。
+    for i in range(4):
+        orig_dist = float(np.linalg.norm(quad[i] - nose_pt))
+        deformed_dist = float(np.linalg.norm(deformed[i] - nose_pt))
+        if orig_dist > 5.0:
+            max_dist = orig_dist * 1.22
+            min_dist = orig_dist * 0.72
+            if deformed_dist > max_dist:
+                direction = (deformed[i] - nose_pt) / deformed_dist
+                deformed[i] = nose_pt + direction * max_dist
+            elif deformed_dist < min_dist:
+                direction = (deformed[i] - nose_pt) / max(deformed_dist, 1e-6)
+                deformed[i] = nose_pt + direction * min_dist
+
+    # 面积检查：整体缩放超标则退回原始四边形
+    def _quad_area(q):
+        return 0.5 * abs((q[0, 0]*q[1, 1] + q[1, 0]*q[2, 1] + q[2, 0]*q[3, 1] + q[3, 0]*q[0, 1])
+                         - (q[1, 0]*q[0, 1] + q[2, 0]*q[1, 1] + q[3, 0]*q[2, 1] + q[0, 0]*q[3, 1]))
+    orig_area = _quad_area(quad)
+    deformed_area = _quad_area(deformed)
+    if orig_area > 1e-6:
+        ratio = deformed_area / orig_area
+        if ratio > 1.5 or ratio < 0.6:
+            return quad
+
     w = camera_matrix[0, 2] * 2
     h = camera_matrix[1, 2] * 2
     deformed[:, 0] = np.clip(deformed[:, 0], -100, w + 100)
     deformed[:, 1] = np.clip(deformed[:, 1], -100, h + 100)
 
-    # 近正脸用平面，转脸用透视，之间平滑过渡
+    # Smooth transition from orthographic to perspective, matching ar-facedoodle's
+    # continuous 3D surface approach.  Use eased blend so small head rotations
+    # don't cause visible jumps.
     angle = float(np.linalg.norm(rvec))
-    blend = float(np.clip((angle - 0.15) / 0.3, 0.0, 1.0))
+    t = float(np.clip((angle - 0.08) / 0.25, 0.0, 1.0))
+    blend = t * t * (3.0 - 2.0 * t)    # smoothstep (ease-in-out)
     return quad * (1.0 - blend) + deformed * blend
 
 
@@ -113,6 +144,20 @@ def _apply_head_pose_skew(quad, face_landmarks):
     # 整体平移跟随面部朝向
     result[:, 0] -= yaw_ratio * face_w * 0.15
     result[:, 1] -= pitch_ratio * face_w * 0.05
+
+    # 逐角距离安全约束，同 _deform_quad_by_pose 策略
+    for i in range(4):
+        orig_dist = float(np.linalg.norm(quad[i] - nose))
+        deformed_dist = float(np.linalg.norm(result[i] - nose))
+        if orig_dist > 5.0:
+            max_dist = orig_dist * 1.22
+            min_dist = orig_dist * 0.72
+            if deformed_dist > max_dist:
+                direction = (result[i] - nose) / deformed_dist
+                result[i] = nose + direction * max_dist
+            elif deformed_dist < min_dist:
+                direction = (result[i] - nose) / max(deformed_dist, 1e-6)
+                result[i] = nose + direction * min_dist
 
     return result
 
@@ -218,7 +263,7 @@ def _warp_sticker_onto_quad(frame, sticker, quad, opacity=1.0):
         sticker,
         matrix_roi,
         (roi_w, roi_h),
-        flags=cv2.INTER_LINEAR,
+        flags=cv2.INTER_CUBIC,
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=(0, 0, 0, 0)
     )

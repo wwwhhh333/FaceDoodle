@@ -87,10 +87,11 @@ def test_frame_to_canvas_maps_center(canvas):
         [100, 100], [400, 100], [400, 400], [100, 400]
     ], dtype=np.float32)
     canvas.begin_stroke(quad)
-    # Center of the face quad (250, 250) → center of canvas (256, 256)
+    # Center of the face quad (250, 250) → center of canvas (CANVAS_SIZE/2)
+    half = CANVAS_SIZE // 2
     cx, cy = canvas._frame_to_canvas((250, 250))
-    assert 200 < cx < 312
-    assert 200 < cy < 312
+    assert half - 60 < cx < half + 60
+    assert half - 60 < cy < half + 60
 
 
 def test_frame_to_canvas_clamps(canvas):

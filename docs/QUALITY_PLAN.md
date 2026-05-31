@@ -2,8 +2,8 @@
 
 ---
 
-**版本**: v1.0
-**生效日期**: 2026-05-21
+**版本**: v1.1
+**生效日期**: 2026-05-31
 
 ---
 
@@ -72,7 +72,8 @@ Consumer 单帧循环 12 步流水线。7 个多进程队列 + 1 个内部线程
 | AI 图像生成 | `app/ai/generator.py` | ComfyUI 超时重试、工作流正确性 | 中 |
 | ComfyUI 管理 | `app/ai/comfy_manager.py` | 子进程启动/终止可靠性 | 低 |
 | 人脸检测 | `app/core/face_mesh.py` | 检测稳定性、中文路径兼容 | 低 |
-| 渲染器 | `app/core/renderer.py` | 贴纸透视变换精度、帧率 | 中 |
+| 渲染器 | `app/core/renderer.py` | 贴纸透视变换精度（鼻尖距离约束）、帧率 | 中 |
+| 注册中心 | `app/core/sticker_registry.py` | 贴纸实例统一管理 | 中 |
 | Consumer 主循环 | `app/core/tracker.py` | 队列调度、竞态条件 | 中 |
 | 贴纸管理 | `app/core/tracker_stickers.py` | 增删改查正确性 | 中 |
 | 动画系统 | `app/core/animation/` | 关键帧插值、导出质量 | 中 |

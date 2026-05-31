@@ -112,6 +112,7 @@ class FaceDoodleWindow(QMainWindow):
         self._last_mouse_pos = None
         self._frame_size = None
         self._current_sticker_id = None
+        self._current_frame = None           # latest rendered frame (BGR) for export
         self._active_instance_ids = []      # instance_ids currently on face
         self._edit_target_id = None
         self._gallery_selected_ids = set()  # multi-select in gallery
@@ -302,6 +303,11 @@ class FaceDoodleWindow(QMainWindow):
         self.ai_anim_btn.clicked.connect(self._on_ai_animate)
         self.ai_anim_btn.setEnabled(False)
         rp_layout.addWidget(self.ai_anim_btn)
+
+        self.export_emoji_btn = StyledButton("导出表情", "ghost")
+        self.export_emoji_btn.clicked.connect(self._on_export_emoji)
+        self.export_emoji_btn.setEnabled(False)
+        rp_layout.addWidget(self.export_emoji_btn)
 
         splitter.addWidget(right_panel)
         splitter.setSizes([100, 800, 210])
@@ -781,6 +787,13 @@ class FaceDoodleWindow(QMainWindow):
             if card and not card._animated:
                 can_animate = True
         self.ai_anim_btn.setEnabled(can_animate)
+
+        # Enable export emoji when there are active stickers or face drawing content
+        self._update_export_btn()
+
+    def _update_export_btn(self):
+        has_content = len(self._active_instance_ids) > 0 or self._face_draw_mode
+        self.export_emoji_btn.setEnabled(has_content and self._current_frame is not None)
 
     def _on_add_selected_to_face(self):
         if not self._gallery_selected_ids:
@@ -1277,6 +1290,7 @@ class FaceDoodleWindow(QMainWindow):
         self._active_instance_ids = [inst["instance_id"] for inst in instances]
         self._edit_target_id = edit_target_id
         self._sync_active_panel(thumbs_info)
+        self._update_export_btn()
 
         if edit_target_id:
             self.anim_timeline.set_instance(edit_target_id)
@@ -1644,6 +1658,28 @@ class FaceDoodleWindow(QMainWindow):
         self._label_offset_x = (self.video_label.width() - scaled.width()) / 2.0
         self._label_offset_y = (self.video_label.height() - scaled.height()) / 2.0
         self.video_label.setPixmap(scaled)
+        self._current_frame = cv_img.copy()  # keep a snapshot for export
+        self._update_export_btn()
+
+    def _on_export_emoji(self):
+        if self._current_frame is None:
+            return
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出表情包", "emoji.png",
+            "PNG 图片 (*.png);;JPEG 图片 (*.jpg)"
+        )
+        if not path:
+            return
+        try:
+            if path.lower().endswith(('.jpg', '.jpeg')):
+                cv2.imwrite(path, self._current_frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            else:
+                cv2.imwrite(path, self._current_frame)
+            h, w = self._current_frame.shape[:2]
+            self.status_label.setText(f"已导出 {w}×{h} → {os.path.basename(path)}")
+        except Exception:
+            log.exception("导出表情包失败")
 
     def closeEvent(self, event):
         from app.utils.storage import save_preferences
